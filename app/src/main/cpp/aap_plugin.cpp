@@ -82,10 +82,16 @@ int slotFromId(const char* id, bool& effect) {
     return effect ? 4 + n : n;
 }
 
+// Control request to whatever runs in the slot: a native plugin (Phase 5) or a Wine host.
+bool slotRequest(int slot, const std::string& req, std::string& resp, int timeoutMs) {
+    if (auto n = slotNative(slot)) { resp = n->request(req); return true; }
+    auto b = slotBridge(slot);
+    return b && b->request(req, resp, timeoutMs);
+}
+
 void fetchParams(Ctx* c) {
-    auto b = slotBridge(c->slot);
     std::string resp;
-    if (!b || !b->request("params_tsv", resp, 10000)) return;
+    if (!slotRequest(c->slot, "params_tsv", resp, 10000)) return;
     std::vector<Param> ps;
     size_t pos = 0;
     while (pos < resp.size()) {
@@ -114,12 +120,11 @@ void workerLoop(Ctx* c) {
             if (c->quit) return;
             todo.swap(c->queue);
         }
-        auto b = slotBridge(c->slot);
         std::string resp;
         for (auto& [index, value] : todo) {
             uint32_t id;
             { std::lock_guard<std::mutex> g(c->pmu); if (index >= c->params.size()) continue; id = c->params[index].vstId; }
-            if (b) b->request("set\n" + std::to_string(id) + "\n" + std::to_string(value), resp, 2000);
+            slotRequest(c->slot, "set\n" + std::to_string(id) + "\n" + std::to_string(value), resp, 2000);
         }
     }
 }
@@ -130,7 +135,9 @@ void enqueueParam(Ctx* c, uint32_t index, double value) {
 }
 
 // MIDI 2.0 UMP sequence -> MIDI 1.0 messages for the bridge; parameter messages -> worker.
-void handleEvents(Ctx* c, BridgeClient& b, aap_buffer_t* buffer) {
+// send(status, d1, d2) delivers MIDI 1.0 to the slot (bridge ring or native queue).
+template <class Send>
+void handleEvents(Ctx* c, Send&& send, aap_buffer_t* buffer) {
     auto* hdr = (AAPMidiBufferHeader*)buffer->get_event_buffer(buffer, AAP_PORT_DIRECTION_INPUT, 0);
     if (!hdr || hdr->length == 0) return;
     const uint32_t* w = (const uint32_t*)(hdr + 1);
@@ -143,18 +150,18 @@ void handleEvents(Ctx* c, BridgeClient& b, aap_buffer_t* buffer) {
         if (i + size > nWords) break;
         if (type == 0x2 || type == 0x4) ++c->midiMsgs;
         if (type == 0x2) {  // MIDI 1.0 channel voice in UMP
-            b.sendMidi((uint8_t)((w0 >> 16) & 0xFF), (uint8_t)((w0 >> 8) & 0x7F), (uint8_t)(w0 & 0x7F));
+            send((uint8_t)((w0 >> 16) & 0xFF), (uint8_t)((w0 >> 8) & 0x7F), (uint8_t)(w0 & 0x7F));
         } else if (type == 0x4) {  // MIDI 2.0 channel voice
             const uint32_t w1 = w[i + 1];
             const uint8_t op = (w0 >> 20) & 0xF, ch = (w0 >> 16) & 0xF, idx = (w0 >> 8) & 0x7F;
             switch (op) {
-            case 0x9: { uint8_t v = (uint8_t)((w1 >> 16) >> 9); b.sendMidi(0x90 | ch, idx, v ? v : 1); break; }
-            case 0x8: b.sendMidi(0x80 | ch, idx, (uint8_t)((w1 >> 16) >> 9)); break;
-            case 0xA: b.sendMidi(0xA0 | ch, idx, (uint8_t)(w1 >> 25)); break;
-            case 0xB: b.sendMidi(0xB0 | ch, idx, (uint8_t)(w1 >> 25)); break;
-            case 0xC: b.sendMidi(0xC0 | ch, (uint8_t)((w1 >> 24) & 0x7F), 0); break;
-            case 0xD: b.sendMidi(0xD0 | ch, (uint8_t)(w1 >> 25), 0); break;
-            case 0xE: { uint32_t v = w1 >> 18; b.sendMidi(0xE0 | ch, (uint8_t)(v & 0x7F), (uint8_t)(v >> 7)); break; }
+            case 0x9: { uint8_t v = (uint8_t)((w1 >> 16) >> 9); send(0x90 | ch, idx, v ? v : 1); break; }
+            case 0x8: send(0x80 | ch, idx, (uint8_t)((w1 >> 16) >> 9)); break;
+            case 0xA: send(0xA0 | ch, idx, (uint8_t)(w1 >> 25)); break;
+            case 0xB: send(0xB0 | ch, idx, (uint8_t)(w1 >> 25)); break;
+            case 0xC: send(0xC0 | ch, (uint8_t)((w1 >> 24) & 0x7F), 0); break;
+            case 0xD: send(0xD0 | ch, (uint8_t)(w1 >> 25), 0); break;
+            case 0xE: { uint32_t v = w1 >> 18; send(0xE0 | ch, (uint8_t)(v & 0x7F), (uint8_t)(v >> 7)); break; }
             case 0x3:  // assignable controller (NRPN): AAP parameter index = bank * 128 + index
                 enqueueParam(c, ((w0 >> 8) & 0x7F) * 0x80 + (w0 & 0x7F), aapParameterUint32ToNormalized(w1));
                 break;
@@ -199,13 +206,31 @@ void process(AndroidAudioPlugin* plugin, aap_buffer_t* buffer, int32_t frameCoun
     auto* c = (Ctx*)plugin->plugin_specific;
     const int nOut = buffer->get_audio_channel_count(buffer, AAP_PORT_DIRECTION_OUTPUT, 0);
     float** outs = buffer->get_audio_channels(buffer, AAP_PORT_DIRECTION_OUTPUT, 0);
+    if (auto nat = slotNative(c->slot); nat && outs && nOut > 0) {
+        // Phase 5: a native plugin renders right here, in the AAP host's process() call.
+        handleEvents(c, [&](uint8_t st, uint8_t d1, uint8_t d2) { nat->queueMidi(st, d1, d2); }, buffer);
+        static thread_local std::vector<float> scratch;
+        scratch.resize((size_t)frameCount);
+        const float* inL = nullptr;
+        const float* inR = nullptr;
+        if (c->effect) {
+            const int nIn = buffer->get_audio_channel_count(buffer, AAP_PORT_DIRECTION_INPUT, 0);
+            float** ins = buffer->get_audio_channels(buffer, AAP_PORT_DIRECTION_INPUT, 0);
+            if (ins && nIn > 0) { inL = ins[0]; inR = ins[nIn > 1 ? 1 : 0]; }
+        }
+        nat->process(inL, inR, outs[0], nOut >= 2 ? outs[1] : scratch.data(), (uint32_t)frameCount);
+        for (int ch = 2; ch < nOut; ++ch) memset(outs[ch], 0, sizeof(float) * (size_t)frameCount);
+        ++c->calls;
+        for (int32_t i = 0; i < frameCount; ++i) c->peak = std::max(c->peak, std::fabs(outs[0][i]));
+        return;
+    }
     auto b = slotBridge(c->slot);
     if (!b || b->hostState() != VG_HOST_RUNNING || !outs || nOut <= 0) {
         for (int ch = 0; ch < nOut; ++ch) if (outs && outs[ch]) memset(outs[ch], 0, sizeof(float) * (size_t)frameCount);
         return;
     }
     ensureSlotFill(c->slot, *b, (uint32_t)frameCount, (uint32_t)frameCount);
-    handleEvents(c, *b, buffer);
+    handleEvents(c, [&](uint8_t st, uint8_t d1, uint8_t d2) { b->sendMidi(st, d1, d2); }, buffer);
     if (c->effect) {
         const int nIn = buffer->get_audio_channel_count(buffer, AAP_PORT_DIRECTION_INPUT, 0);
         float** ins = buffer->get_audio_channels(buffer, AAP_PORT_DIRECTION_INPUT, 0);
@@ -286,10 +311,9 @@ std::string jsonField(const std::string& json, const char* key) {
 
 size_t stateSize(aap_state_extension_t*, AndroidAudioPlugin* plugin) {
     auto* c = (Ctx*)plugin->plugin_specific;
-    auto b = slotBridge(c->slot);
     std::string resp;
     c->state.clear();
-    if (b && b->request("get_state", resp, 10000))
+    if (slotRequest(c->slot, "get_state", resp, 10000))
         c->state = "VSTGHOST-STATE-1\n" + jsonField(resp, "component") + "\n" + jsonField(resp, "controller") + "\n";
     return c->state.size();
 }
@@ -311,9 +335,8 @@ void setState(aap_state_extension_t*, AndroidAudioPlugin* plugin, aap_state_t* s
     size_t a = s.find('\n') + 1, m = s.find('\n', a), e = s.find('\n', m + 1);
     if (m == std::string::npos) return;
     std::string comp = s.substr(a, m - a), ctrl = e == std::string::npos ? std::string() : s.substr(m + 1, e - m - 1);
-    auto b = slotBridge(c->slot);
     std::string resp;
-    if (b) b->request("set_state\n" + comp + "\n" + ctrl, resp, 10000);
+    slotRequest(c->slot, "set_state\n" + comp + "\n" + ctrl, resp, 10000);
 }
 
 aap_state_extension_t g_stateExt{nullptr, stateSize, getState, setState};

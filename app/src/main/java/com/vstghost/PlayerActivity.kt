@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+﻿// SPDX-License-Identifier: GPL-3.0-or-later
 package com.vstghost
 
 import android.app.Activity
@@ -76,9 +76,9 @@ class PlayerActivity : Activity() {
         refreshPlugins()
         midi = MidiInput(this) { s -> ui.post { midiStatus.text = s } }.also { it.start() }
         io.execute {
-            setStatus("Preparing Wine…")
+            setStatus("Preparing Wineâ€¦")
             if (bridge.payload.needsInstall()) {
-                setStatus("Installing the Windows runtime…")
+                setStatus("Installing the Windows runtimeâ€¦")
                 val r = bridge.payload.install(null)
                 if (!r.ok) { setStatus("Runtime install failed: ${r.message}"); return@execute }
             }
@@ -96,7 +96,8 @@ class PlayerActivity : Activity() {
             // adb: am start -n <pkg>/com.vstghost.PlayerActivity --es load "E-Piano"
             intent?.getStringExtra("load")?.let { name ->
                 ui.post {
-                    val i = plugins.indexOfFirst { it.name.removeSuffix(".vst3") == name }
+                    // name: a bridged VST's name, or a native library ("vgn_epianovst")
+                    val i = plugins.indexOfFirst { it.nameWithoutExtension == name }
                     if (i >= 0) { pluginSpinner.setSelection(i); loadSelected() }
                 }
             }
@@ -138,6 +139,8 @@ class PlayerActivity : Activity() {
         btn("Load", top) { loadSelected() }
         btn("Editor", top) {
             if (!bridge.isRunning) android.widget.Toast.makeText(this, "Load a plugin first", android.widget.Toast.LENGTH_SHORT).show()
+            else if (bridge.isNativeLoaded)
+                startActivity(Intent(this, NativeEditorActivity::class.java).putExtra(EditorActivity.EXTRA_SLOT, 0))
             else startActivity(Intent(this, EditorActivity::class.java).putExtra(EditorActivity.EXTRA_SLOT, 0))
         }
         btn("Presets", top) { presets() }
@@ -169,7 +172,7 @@ class PlayerActivity : Activity() {
             NativeEngine.sendMidi(0xB0, 64, if (sustain) 127 else 0)
             sustainBtn.text = "Sustain: ${if (sustain) "ON" else "off"}"
         }
-        btn("Oct −", ctl, 1f) { keyboard.allOff(); keyboard.firstOctave -= 1 }
+        btn("Oct âˆ’", ctl, 1f) { keyboard.allOff(); keyboard.firstOctave -= 1 }
         btn("Oct +", ctl, 1f) { keyboard.allOff(); keyboard.firstOctave += 1 }
         right.addView(ctl)
         midiStatus = TextView(this).apply { textSize = 11f; setTextColor(Color.GRAY) }
@@ -182,7 +185,7 @@ class PlayerActivity : Activity() {
             setSelection(1)
         }
         val fillSpin = Spinner(this).apply {
-            adapter = ArrayAdapter(this@PlayerActivity, android.R.layout.simple_spinner_dropdown_item, (1..8).map { "buffer ×$it" })
+            adapter = ArrayAdapter(this@PlayerActivity, android.R.layout.simple_spinner_dropdown_item, (1..8).map { "buffer Ã—$it" })
             setSelection(1)
         }
         cfg.addView(blockSpin, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
@@ -229,8 +232,10 @@ class PlayerActivity : Activity() {
     private fun setStatus(s: String) = ui.post { status.text = s }
 
     private fun refreshPlugins() {
-        plugins = File(filesDir, "plugins").listFiles()?.filter { it.name.endsWith(".vst3") }?.sortedBy { it.name.lowercase() }.orEmpty()
-        val names = plugins.map { it.name.removeSuffix(".vst3") }.ifEmpty { listOf("(no plugins: push them to Android/data/$packageName/files/plugins)") }
+        // Native (Phase 5) plugins first, then bridged Windows VSTs.
+        plugins = NativePlugins.entries(this).map { it.file } +
+            File(filesDir, "plugins").listFiles()?.filter { it.name.endsWith(".vst3") }?.sortedBy { it.name.lowercase() }.orEmpty()
+        val names = plugins.map { NativePlugins.displayName(it) }.ifEmpty { listOf("(no plugins: push them to Android/data/$packageName/files/plugins)") }
         pluginSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, names).apply {
             setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         }
@@ -251,25 +256,36 @@ class PlayerActivity : Activity() {
     }
 
     private fun load(f: File, state: JSONObject?) {
-        setStatus("Loading ${f.name.removeSuffix(".vst3")}…")
+        setStatus("Loading ${NativePlugins.displayName(f)}â€¦")
         io.execute {
             val r = bridge.load(f, block, fillBlocks)
             if (!r.ok) { setStatus("Load failed: ${r.message}"); return@execute }
             if (state != null) bridge.request("set_state\n${state.optString("component")}\n${state.optString("controller")}")
             val info = bridge.request("info")?.let { JSONObject(it) }
-            loadedName = f.name.removeSuffix(".vst3")
+            loadedName = NativePlugins.displayName(f)
             val instrument = info?.optBoolean("instrument") ?: true
             NativeEngine.setInputMode(if (instrument) 0 else 1)
             ui.post { inputBtn.text = "Effect input: ${if (instrument) "off" else "test signal"}" }
             loadParams()
             val n = info?.optInt("paramCount") ?: 0
             ui.post {
-                header.text = "${info?.optString("name")}  ·  ${info?.optString("vendor")} ${info?.optString("version")}  ·  " +
+                header.text = "${info?.optString("name")}  Â·  ${info?.optString("vendor")} ${info?.optString("version")}  Â·  " +
                               (if (instrument) "instrument" else "effect")
             }
-            setStatus("Loaded in ${r.ms} ms · $n parameters below (the plugin's own window comes in Phase 4) · " +
+            setStatus("Loaded in ${r.ms} ms Â· $n parameters Â· press Editor for the plugin's own window Â· " +
                       (if (instrument) "play the keyboard" else "hearing the built-in test signal through it"))
             captureState()
+            // adb: --ez selftest true  -> play a chord through the normal MIDI path and log the output peak
+            if (intent?.getBooleanExtra("selftest", false) == true) {
+                NativeEngine.resetStats(0)
+                if (instrument) for (k in intArrayOf(60, 64, 67)) NativeEngine.sendMidi(0, 0x90, k, 100)
+                Thread.sleep(1500)
+                val peak = NativeEngine.stats(0)[27]
+                val st = NativeEngine.stats(0)
+                if (instrument) for (k in intArrayOf(60, 64, 67)) NativeEngine.sendMidi(0, 0x80, k, 0)
+                android.util.Log.i("VSTGHOST", "selftest ${NativePlugins.displayName(f)}: peak %.3f (%.1f dBFS) load %d ms renderAvg %.0f us max %.0f us blocks %.0f underruns %.0f".format(
+                    peak, 20 * kotlin.math.log10(peak.coerceAtLeast(1e-9)), r.ms, st[9], st[10], st[8], st[6]))
+            }
         }
     }
 
@@ -284,7 +300,7 @@ class PlayerActivity : Activity() {
     private fun onHostCrashed(code: Int) {
         keyboard.allOff()
         val tail = bridge.recentLog(4).joinToString("\n")
-        status.text = "⚠ The plugin host stopped (exit code $code). Audio output is still running.\n$tail"
+        status.text = "âš  The plugin host stopped (exit code $code). Audio output is still running.\n$tail"
         restartBtn.visibility = View.VISIBLE
     }
 
@@ -365,7 +381,7 @@ class PlayerActivity : Activity() {
         val slots = (1..8).toList()
         val items = slots.map { s ->
             "${SlotManager.label(s)}:  ${current[s] ?: "(empty)"}" +
-                (if (s < SlotManager.FIRST_FX) "   ·  AAP + MIDI device" else "   ·  AAP effect")
+                (if (s < SlotManager.FIRST_FX) "   Â·  AAP + MIDI device" else "   Â·  AAP effect")
         }.toTypedArray()
         AlertDialog.Builder(this)
             .setTitle("Bridge slots (seen by other apps)")
@@ -374,11 +390,11 @@ class PlayerActivity : Activity() {
     }
 
     private fun pickForSlot(slot: Int) {
-        val names = plugins.map { it.name.removeSuffix(".vst3") }
-        val choices = (listOf("(empty)") + names).toTypedArray()
+        val names = plugins.map { it.nameWithoutExtension }  // slot keys: VST name or native library
+        val choices = (listOf("(empty)") + plugins.map { NativePlugins.displayName(it) }).toTypedArray()
         AlertDialog.Builder(this).setTitle(SlotManager.label(slot)).setItems(choices) { _, which ->
             SlotManager.assign(slot, if (which == 0) null else names[which - 1])
-            status.text = "${SlotManager.label(slot)} → ${if (which == 0) "(empty)" else names[which - 1]}. " +
+            status.text = "${SlotManager.label(slot)} â†’ ${if (which == 0) "(empty)" else names[which - 1]}. " +
                           "Other apps pick it up the next time they load that slot."
             slotsDialog()
         }.show()
@@ -391,7 +407,7 @@ class PlayerActivity : Activity() {
     private fun presets() {
         if (loadedName == null) { status.text = "Load a plugin first."; return }
         val files = presetDir().listFiles()?.filter { it.name.endsWith(".json") }?.sortedBy { it.name }.orEmpty()
-        val items = (listOf("＋ Save current sound as…") + files.map { it.name.removeSuffix(".json") }).toTypedArray()
+        val items = (listOf("ï¼‹ Save current sound asâ€¦") + files.map { it.name.removeSuffix(".json") }).toTypedArray()
         AlertDialog.Builder(this).setTitle("Presets: $loadedName").setItems(items) { _, which ->
             if (which == 0) savePreset() else loadPreset(files[which - 1])
         }.show()
@@ -444,10 +460,10 @@ class PlayerActivity : Activity() {
                 statsView.text = buildString {
                     appendLine("Output   ${s.sampleRate} Hz  burst ${s.burst}  callback ${s.callbackFrames}  buffer ${s.bufferFrames}  ${if (s.lowLatency) "low-latency" else "NOT low-latency (Bluetooth?)"}${if (s.exclusive) " excl" else ""}")
                     appendLine("Bridge   block ${s.block}  target ${s.targetFill} fr (${"%.1f".format(s.targetFill / 48.0)} ms)  fill ${s.fill}  wake ${if (s.futex) "futex" else "poll"}")
-                    appendLine("Latency  Oboe out ${"%.1f".format(s.oboeLatencyMs)} ms + bridge ≈ ${"%.1f".format(s.targetFill / 48.0)} ms")
+                    appendLine("Latency  Oboe out ${"%.1f".format(s.oboeLatencyMs)} ms + bridge â‰ˆ ${"%.1f".format(s.targetFill / 48.0)} ms")
                     appendLine("Glitches underruns ${s.underruns}  Oboe xruns ${s.oboeXruns}")
-                    appendLine("Host     render avg ${"%.0f".format(s.hostAvgUs)} µs  max ${"%.0f".format(s.hostMaxUs)} µs  CPU ${if (cpuPct.isNaN()) "-" else "%.0f%%".format(cpuPct)}")
-                    append("Callback avg ${"%.0f".format(s.cbAvgUs)} µs  max ${"%.0f".format(s.cbMaxUs)} µs  n=${s.callbacks}")
+                    appendLine("Host     render avg ${"%.0f".format(s.hostAvgUs)} Âµs  max ${"%.0f".format(s.hostMaxUs)} Âµs  CPU ${if (cpuPct.isNaN()) "-" else "%.0f%%".format(cpuPct)}")
+                    append("Callback avg ${"%.0f".format(s.cbAvgUs)} Âµs  max ${"%.0f".format(s.cbMaxUs)} Âµs  n=${s.callbacks}")
                 }
             }
             ui.postDelayed(this, 500)
@@ -457,7 +473,7 @@ class PlayerActivity : Activity() {
     private fun latencyTest() {
         if (!bridge.isRunning) { status.text = "Load a plugin first."; return }
         keyboard.allOff()
-        statsView.append("\nLatency test running…")
+        statsView.append("\nLatency test runningâ€¦")
         io.execute {
             val res = mutableListOf<Double>()
             repeat(8) {
@@ -475,8 +491,8 @@ class PlayerActivity : Activity() {
             val s = NativeEngine.statsNamed()
             val med = res.getOrNull(res.size / 2)
             setStatus(if (med == null) "Latency test: no onset detected (patch too quiet or slow attack?)"
-                      else "Latency: note-on → output ${"%.1f".format(med)} ms (median of ${res.size}, max ${"%.1f".format(res.last())}) " +
-                           "+ Oboe output ${"%.1f".format(s.oboeLatencyMs)} ms ≈ ${"%.0f".format(med + s.oboeLatencyMs)} ms total (touch latency not included)")
+                      else "Latency: note-on â†’ output ${"%.1f".format(med)} ms (median of ${res.size}, max ${"%.1f".format(res.last())}) " +
+                           "+ Oboe output ${"%.1f".format(s.oboeLatencyMs)} ms â‰ˆ ${"%.0f".format(med + s.oboeLatencyMs)} ms total (touch latency not included)")
         }
     }
 }

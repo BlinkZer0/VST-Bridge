@@ -21,6 +21,9 @@ android {
             cmake {
                 cppFlags += "-std=c++20"
                 arguments += "-DANDROID_STL=c++_shared"  // required by Oboe's prefab package
+                // Phase 5: build the native plugins from local checkouts instead of pinned archives.
+                (project.findProperty("vg.pluginSrcRoot") as String?)?.let { arguments += "-DVG_PLUGIN_SRC_ROOT=$it" }
+                (project.findProperty("vg.nativePlugins") as String?)?.let { arguments += "-DVG_NATIVE_PLUGINS=$it" }
             }
         }
     }

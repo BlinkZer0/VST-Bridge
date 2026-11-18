@@ -13,11 +13,14 @@
 #include <vector>
 
 #include "bridge_client.h"
+#include "native_host.h"
 
 namespace vg {
 
 constexpr int kSlots = 9;
 
+// Native plugin of a slot (may be null): when set, it replaces the bridge.
+std::shared_ptr<NativeInstance> slotNative(int slot);
 // Bridge of a slot (may be null). Lock-free read.
 std::shared_ptr<BridgeClient> slotBridge(int slot);
 // Route a slot's audio to an AAP host (true) or to the Oboe mix (false).

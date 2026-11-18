@@ -15,6 +15,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <unistd.h>
 #include <cstring>
 #include <ctime>
 #include <memory>
@@ -68,6 +69,7 @@ private:
 
 struct Slot {
     std::shared_ptr<BridgeClient> bridge;
+    std::shared_ptr<NativeInstance> native;  // Phase 5: an in-process plugin instead of a bridge
     std::atomic<bool> aapOwned{false};
     std::atomic<int> inputMode{0};  // 0 silence, 1 test signal (effects in the app)
     std::atomic<float> peak{0.0f};  // output peak since the last stats reset (app-mixed slots)
@@ -144,6 +146,26 @@ public:
         for (int i = 0; i < kSlots; ++i) {
             Slot& sl = slots[i];
             if (sl.aapOwned.load(std::memory_order_relaxed)) continue;
+            if (auto nat = std::atomic_load(&sl.native)) {
+                const float* inL = nullptr;
+                const float* inR = nullptr;
+                if (!nat->instrument()) {
+                    if (sl.inputMode.load(std::memory_order_relaxed) == 1) {
+                        if (!testFilled) { test_.fill(inL_, inR_, n); testFilled = true; }
+                        inL = inL_; inR = inR_;
+                    } else {
+                        inL = zero_; inR = zero_;
+                    }
+                }
+                nat->process(inL, inR, l_, r_, n);
+                float pk = sl.peak.load(std::memory_order_relaxed);
+                for (uint32_t k = 0; k < n; ++k) {
+                    mixL_[k] += l_[k]; mixR_[k] += r_[k];
+                    pk = std::max(pk, std::fabs(l_[k]));
+                }
+                sl.peak.store(pk, std::memory_order_relaxed);
+                continue;
+            }
             auto b = std::atomic_load(&sl.bridge);
             if (!b || b->hostState() != VG_HOST_RUNNING) continue;
             ensureSlotFill(i, *b, n, routeBuf);
@@ -211,6 +233,14 @@ public:
             v[23] = VG_LOAD(&s->hostState);
             v[26] = (double)VG_LOAD(&s->midiRead);  // MIDI messages the host has consumed
         }
+        if (auto nat = std::atomic_load(&slots[slot].native)) {
+            const double blocks = (double)nat->blocks.load();
+            v[8] = blocks;
+            v[9] = blocks > 0 ? nat->renderNsTotal.load() / 1e3 / blocks : 0;
+            v[10] = nat->maxBlockNs.load() / 1e3;
+            v[23] = VG_HOST_RUNNING;
+            v[26] = (double)nat->midiConsumed.load();
+        }
         v[27] = slots[slot].peak.load();
         const double cnt = (double)cbCount_.load();
         v[11] = cnt > 0 ? cbNsTotal_.load() / 1e3 / cnt : 0;
@@ -225,15 +255,18 @@ public:
         slots[slot].peak = 0.0f;
         auto b = std::atomic_load(&slots[slot].bridge);
         if (b) { b->resetUnderruns(); if (b->ipc()) VG_STORE(&b->ipc()->maxBlockNs, 0u); }
+        if (auto nat = std::atomic_load(&slots[slot].native)) nat->maxBlockNs = 0;
     }
 
     std::atomic<float> gain_{1.0f};
+    int sampleRate() const { return sampleRate_; }
 
 private:
     static constexpr int kMaxFrames = 8192;
     std::mutex mu_;
     std::shared_ptr<oboe::AudioStream> stream_;
     int sampleRate_ = 48000, bufferBursts_ = 2;
+    float zero_[kMaxFrames] = {};
     float l_[kMaxFrames], r_[kMaxFrames], inL_[kMaxFrames], inR_[kMaxFrames], mixL_[kMaxFrames], mixR_[kMaxFrames];
     TestSignal test_;
     std::atomic<uint64_t> cbCount_{0}, cbNsTotal_{0}, cbNsMax_{0}, restarts_{0};
@@ -255,6 +288,10 @@ std::string jstr(JNIEnv* env, jstring s) {
 bool okSlot(int s) { return s >= 0 && s < kSlots; }
 
 }  // namespace
+
+std::shared_ptr<NativeInstance> slotNative(int slot) {
+    return okSlot(slot) ? std::atomic_load(&engine().slots[slot].native) : nullptr;
+}
 
 std::shared_ptr<BridgeClient> slotBridge(int slot) {
     return okSlot(slot) ? std::atomic_load(&engine().slots[slot].bridge) : nullptr;
@@ -298,6 +335,7 @@ JNIFN(jstring, createBridge)(JNIEnv* env, jclass, jint slot, jstring path, jint 
 JNIFN(void, closeBridge)(JNIEnv*, jclass, jint slot) { if (okSlot(slot)) engine().closeBridge(slot); }
 
 JNIFN(jint, hostState)(JNIEnv*, jclass, jint slot) {
+    if (slotNative(slot)) return (jint)VG_HOST_RUNNING;
     auto b = slotBridge(slot);
     return b ? (jint)b->hostState() : (jint)VG_HOST_EXITED;
 }
@@ -310,6 +348,7 @@ JNIFN(jstring, lastResponse)(JNIEnv* env, jclass, jint slot) {
 }
 
 JNIFN(jstring, request)(JNIEnv* env, jclass, jint slot, jstring req, jint timeoutMs) {
+    if (auto nat = slotNative(slot)) return env->NewStringUTF(nat->request(jstr(env, req)).c_str());
     auto b = slotBridge(slot);
     std::string resp;
     if (!b || !b->request(jstr(env, req), resp, timeoutMs)) return nullptr;
@@ -317,6 +356,7 @@ JNIFN(jstring, request)(JNIEnv* env, jclass, jint slot, jstring req, jint timeou
 }
 
 JNIFN(jboolean, sendMidi)(JNIEnv*, jclass, jint slot, jint st, jint d1, jint d2) {
+    if (auto nat = slotNative(slot)) return nat->queueMidi((uint8_t)st, (uint8_t)d1, (uint8_t)d2);
     auto b = slotBridge(slot);
     return b && b->sendMidi((uint8_t)st, (uint8_t)d1, (uint8_t)d2);
 }
@@ -349,3 +389,53 @@ JNIFN(jdoubleArray, stats)(JNIEnv* env, jclass, jint slot) {
     return a;
 }
 JNIFN(void, resetStats)(JNIEnv*, jclass, jint slot) { engine().resetStats(okSlot(slot) ? slot : 0); }
+
+// ---- Phase 5: native plugins (see native_host.h). All on the main thread.
+
+// Initialises a native plugin library (already System.loadLibrary'd). Returns info JSON or "ERROR: ...".
+JNIFN(jstring, nativeInit)(JNIEnv* env, jclass, jstring lib, jobject context) {
+    return env->NewStringUTF(nativeInit(env, context, jstr(env, lib)).c_str());
+}
+
+// Puts a new instance of the library's plugin into the slot. rate 0 = the output stream's rate.
+JNIFN(jstring, nativeOpen)(JNIEnv* env, jclass, jint slot, jstring lib, jint rate, jint maxBlock) {
+    if (!okSlot(slot)) return env->NewStringUTF("bad slot");
+    std::string err;
+    auto inst = NativeInstance::open(jstr(env, lib), rate > 0 ? rate : engine().sampleRate(), maxBlock, err);
+    if (!inst) return env->NewStringUTF(err.c_str());
+    engine().closeBridge(slot);
+    std::atomic_store(&engine().slots[slot].native, inst);
+    return nullptr;
+}
+
+// Takes the slot's native plugin out of the audio path and destroys it here (the main thread).
+JNIFN(void, nativeClose)(JNIEnv*, jclass, jint slot) {
+    if (!okSlot(slot)) return;
+    auto inst = std::atomic_exchange(&engine().slots[slot].native, std::shared_ptr<NativeInstance>());
+    if (!inst) return;
+    for (int i = 0; i < 2000 && inst.use_count() > 1; ++i) usleep(500);  // audio callback done with it
+    if (inst.use_count() > 1) {
+        LOGI("native slot %d still in use; leaking it", slot);
+        new std::shared_ptr<NativeInstance>(inst);
+        return;
+    }
+    inst.reset();
+}
+
+JNIFN(jboolean, isNative)(JNIEnv*, jclass, jint slot) { return slotNative(slot) != nullptr; }
+
+// Attaches the plugin's own editor into viewGroup, fitted to w x h. Returns [w, h] or null.
+JNIFN(jintArray, nativeEditorOpen)(JNIEnv* env, jclass, jint slot, jobject viewGroup, jint w, jint h) {
+    auto nat = slotNative(slot);
+    if (!nat) return nullptr;
+    int32_t ew = 0, eh = 0;
+    if (!nat->api()->editorOpen(nat->plugin(), env, viewGroup, w, h, &ew, &eh)) return nullptr;
+    jint r[2] = {ew, eh};
+    jintArray a = env->NewIntArray(2);
+    env->SetIntArrayRegion(a, 0, 2, r);
+    return a;
+}
+
+JNIFN(void, nativeEditorClose)(JNIEnv*, jclass, jint slot) {
+    if (auto nat = slotNative(slot)) nat->api()->editorClose(nat->plugin());
+}

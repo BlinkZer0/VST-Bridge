@@ -25,6 +25,9 @@ find_package(oboe REQUIRED CONFIG)
 find_package(androidaudioplugin REQUIRED CONFIG)
 
 set(SHARED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../shared)
+
+# Phase 5: the user's JUCE plugins as native libraries (lib vg_*.so).
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../native native)
 add_library(vstghost SHARED
     jni.cpp
     extractor.cpp
@@ -32,10 +35,11 @@ add_library(vstghost SHARED
     aap_plugin.cpp
     bench.c
     wl_jni.cpp
+    native_host.cpp
     ${SHARED_DIR}/wl/vg_wl.cpp
     ${SHARED_DIR}/ipc/bridge_client.cpp)
 
-target_include_directories(vstghost PRIVATE ${SHARED_DIR} ${SHARED_DIR}/ipc)
+target_include_directories(vstghost PRIVATE ${SHARED_DIR} ${SHARED_DIR}/ipc ${CMAKE_CURRENT_SOURCE_DIR}/../../../../native)
 target_link_libraries(vstghost PRIVATE zstd_decompress oboe::oboe androidaudioplugin::androidaudioplugin android log)
 target_compile_options(vstghost PRIVATE -Wall -Wextra)
 # Benchmark must not use FMA contraction, so its checksum matches the x86_64 build.

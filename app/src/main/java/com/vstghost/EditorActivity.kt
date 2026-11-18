@@ -7,7 +7,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.RectF
 import android.os.Bundle
 import android.util.Log
 import android.view.Choreographer
@@ -23,7 +22,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import org.json.JSONObject
 import kotlin.concurrent.thread
-import kotlin.math.min
 
 /**
  * Shows a bridged plugin's own Windows editor (Phase 4). The slot's host opens the editor window
@@ -125,19 +123,22 @@ class EditorActivity : Activity() {
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 }
 
-/** Draws the compositor's picture scaled to fit; touches become left-button mouse input. */
+/**
+ * Draws the compositor's picture; one finger is the plugin's mouse, two fingers pinch-zoom and pan
+ * (see [ZoomPan]).
+ */
 class EditorView(context: Context) : View(context), Choreographer.FrameCallback {
     private var bmp: Bitmap? = null
     private var buf = IntArray(0)
     private val meta = IntArray(2)
     private var serial = 0L
-    private val dst = RectF()
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
     private var running = false
     private var frames = 0
     private var fpsT0 = 0L
     private var fps = 0.0
     var onPicture: ((Int, Int, Double) -> Unit)? = null
+    private val zoom = ZoomPan(onChange = { invalidate() }, onMouse = { x, y, b -> NativeEngine.wlPointer(x, y, b) })
 
     fun start() {
         if (running) return
@@ -186,39 +187,27 @@ class EditorView(context: Context) : View(context), Choreographer.FrameCallback 
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(Color.BLACK)
         val b = bmp ?: return
-        val scale = min(width.toFloat() / b.width, height.toFloat() / b.height)
-        val w = b.width * scale
-        val h = b.height * scale
-        dst.set((width - w) / 2f, (height - h) / 2f, (width + w) / 2f, (height + h) / 2f)
-        canvas.drawBitmap(b, null, dst, paint)
+        zoom.setSizes(width, height, b.width, b.height)
+        canvas.save()
+        canvas.translate(zoom.offsetX, zoom.offsetY)
+        canvas.scale(zoom.scale, zoom.scale)
+        canvas.drawBitmap(b, 0f, 0f, paint)
+        canvas.restore()
     }
 
-    private fun toPicture(e: MotionEvent): Pair<Float, Float>? {
-        val b = bmp ?: return null
-        if (dst.width() <= 0f) return null
-        val s = b.width / dst.width()
-        return Pair((e.x - dst.left) * s, (e.y - dst.top) * s)
-    }
+    override fun onTouchEvent(e: MotionEvent): Boolean = if (bmp == null) true else zoom.onTouch(e)
 
-    override fun onTouchEvent(e: MotionEvent): Boolean {
-        val (x, y) = toPicture(e) ?: return true
-        when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> NativeEngine.wlPointer(x, y, 1)
-            MotionEvent.ACTION_MOVE -> NativeEngine.wlPointer(x, y, -1)
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> NativeEngine.wlPointer(x, y, 0)
-        }
-        return true
-    }
-
-    // A real mouse (USB/Bluetooth): hover and wheel.
+    // A real mouse (USB/Bluetooth): hover and wheel; Ctrl + wheel zooms.
     override fun onGenericMotionEvent(e: MotionEvent): Boolean {
-        if (!e.isFromSource(InputDevice.SOURCE_CLASS_POINTER)) return super.onGenericMotionEvent(e)
-        val (x, y) = toPicture(e) ?: return true
+        if (!e.isFromSource(InputDevice.SOURCE_CLASS_POINTER) || bmp == null) return super.onGenericMotionEvent(e)
+        val x = zoom.toContentX(e.x)
+        val y = zoom.toContentY(e.y)
         when (e.actionMasked) {
             MotionEvent.ACTION_HOVER_MOVE -> NativeEngine.wlPointer(x, y, -1)
             MotionEvent.ACTION_SCROLL -> {
-                NativeEngine.wlPointer(x, y, -1)
-                NativeEngine.wlScroll(-e.getAxisValue(MotionEvent.AXIS_VSCROLL))
+                val v = e.getAxisValue(MotionEvent.AXIS_VSCROLL)
+                if ((e.metaState and android.view.KeyEvent.META_CTRL_ON) != 0) zoom.zoomBy(e.x, e.y, if (v > 0) 1.15f else 1 / 1.15f)
+                else { NativeEngine.wlPointer(x, y, -1); NativeEngine.wlScroll(-v) }
             }
         }
         return true

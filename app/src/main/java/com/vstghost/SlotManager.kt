@@ -40,7 +40,11 @@ object SlotManager {
         file.writeText(j.toString())
     }
 
-    private fun pluginFile(name: String) = File(app.filesDir, "plugins/$name.vst3")
+    /** Slot assignment -> plugin file: a native library ("vgn_...", Phase 5) or a bridged .vst3. */
+    private fun pluginFile(name: String) =
+        if (name.startsWith("vgn_")) NativePlugins.fileFor(app, name) else File(app.filesDir, "plugins/$name.vst3")
+    private fun pluginExists(name: String) =
+        if (name.startsWith("vgn_")) name in NativePlugins.libs(app) else pluginFile(name).exists()
 
     @Volatile private var runtimeReady = false
 
@@ -70,8 +74,9 @@ object SlotManager {
     fun prepareForAap(slot: Int, sampleRate: Int, frames: Int): Boolean {
         val name = assigned(slot)
         if (name == null) { Log.w(TAG, "AAP: ${label(slot)} has no VST assigned"); return false }
-        try { prepareRuntime() } catch (e: Exception) { Log.e(TAG, "AAP: runtime setup failed", e); return false }
-        if (!pluginFile(name).exists()) { Log.w(TAG, "AAP: plugin $name not found"); return false }
+        // Native plugins (Phase 5) need no Wine runtime.
+        if (!name.startsWith("vgn_")) try { prepareRuntime() } catch (e: Exception) { Log.e(TAG, "AAP: runtime setup failed", e); return false }
+        if (!pluginExists(name)) { Log.w(TAG, "AAP: plugin $name not found"); return false }
         val block = when { frames <= 128 -> 128; frames <= 256 -> 256; else -> 256 }
         val r = Bridge.get(app, slot).load(pluginFile(name), block, 2, rate = sampleRate, useAppAudio = false)
         Log.i(TAG, "AAP: ${label(slot)} -> $name at $sampleRate Hz, block $block: ${r.message} (${r.ms} ms)")
@@ -90,7 +95,7 @@ object SlotManager {
         val bridge = Bridge.get(app, slot)
         if (bridge.isRunning) return true  // already running (maybe for an AAP host: MIDI goes there too)
         val name = assigned(slot) ?: run { Log.w(TAG, "MIDI: ${label(slot)} has no VST assigned"); return false }
-        try { prepareRuntime() } catch (e: Exception) { Log.e(TAG, "MIDI: runtime setup failed", e); return false }
+        if (!name.startsWith("vgn_")) try { prepareRuntime() } catch (e: Exception) { Log.e(TAG, "MIDI: runtime setup failed", e); return false }
         val r = bridge.load(pluginFile(name), 128, 2)
         Log.i(TAG, "MIDI: ${label(slot)} -> $name: ${r.message} (${r.ms} ms)")
         return r.ok

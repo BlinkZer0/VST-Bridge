@@ -33,6 +33,15 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
 
+        <!-- A native plugin's own editor (Phase 5). -->
+        <activity
+            android:name=".NativeEditorActivity"
+            android:exported="true"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+
         <!-- Test harness (Phase 0-2 reports); also driven by adb autorun. -->
         <activity
             android:name=".MainActivity"

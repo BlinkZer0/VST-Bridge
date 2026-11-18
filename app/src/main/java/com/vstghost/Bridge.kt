@@ -40,6 +40,9 @@ class Bridge private constructor(context: Context, val slot: Int) {
     }
 
     val payload = Payload(context)
+    private val appContext: Context = context.applicationContext
+    /** Phase 5: the slot runs a native plugin in-process instead of a Wine host. */
+    @Volatile var isNativeLoaded = false; private set
     private val shm = File(context.filesDir, "ipc/slot$slot.shm")
     private var proc: Process? = null
     @Volatile private var stopping = false
@@ -66,6 +69,7 @@ class Bridge private constructor(context: Context, val slot: Int) {
      */
     fun load(pluginFile: File?, block: Int, fillBlocks: Int, pattern: Boolean = false, timeoutMs: Long = 120_000,
              rate: Int = 0, useAppAudio: Boolean = true): LoadResult {
+        if (NativePlugins.isNative(pluginFile)) return loadNative(pluginFile!!, rate, useAppAudio)
         stop()
         if (useAppAudio && !NativeEngine.startAudio()) return LoadResult(false, "could not open the audio output (Oboe)", 0)
         NativeEngine.setAapOwned(slot, !useAppAudio)
@@ -117,7 +121,28 @@ class Bridge private constructor(context: Context, val slot: Int) {
         return LoadResult(false, "timed out waiting for the host", 0)
     }
 
+    private fun loadNative(f: File, rate: Int, useAppAudio: Boolean): LoadResult {
+        stop()
+        if (useAppAudio && !NativeEngine.startAudio()) return LoadResult(false, "could not open the audio output (Oboe)", 0)
+        NativeEngine.setAapOwned(slot, !useAppAudio)
+        plugin = f
+        val t0 = SystemClock.elapsedRealtime()
+        val lib = f.nameWithoutExtension
+        NativePlugins.ensure(appContext, lib) ?: return LoadResult(false, "could not load native library $lib", 0)
+        val err = onMain { NativeEngine.nativeOpen(slot, "lib$lib.so", rate, 1024) }
+        if (err != null) return LoadResult(false, err, 0)
+        isNativeLoaded = true
+        lastLoadMs = SystemClock.elapsedRealtime() - t0
+        return LoadResult(true, "running (native)", lastLoadMs)
+    }
+
     fun stop() {
+        if (isNativeLoaded) {
+            isNativeLoaded = false
+            onMain { NativeEngine.nativeEditorClose(slot); NativeEngine.nativeClose(slot) }
+            NativeEngine.setAapOwned(slot, false)
+            return
+        }
         val p = proc ?: run { NativeEngine.closeBridge(slot); return }
         stopping = true
         NativeEngine.closeBridge(slot)  // sets stopFlag + wakes the host
@@ -129,7 +154,7 @@ class Bridge private constructor(context: Context, val slot: Int) {
         NativeEngine.setAapOwned(slot, false)
     }
 
-    val isRunning get() = proc?.isAlive == true && NativeEngine.hostState(slot) == NativeEngine.HOST_RUNNING
+    val isRunning get() = isNativeLoaded || (proc?.isAlive == true && NativeEngine.hostState(slot) == NativeEngine.HOST_RUNNING)
 
     fun request(req: String, timeoutMs: Int = 10_000): String? = NativeEngine.request(slot, req, timeoutMs)
 

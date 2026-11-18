@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+﻿// SPDX-License-Identifier: GPL-3.0-or-later
 package com.vstghost
 
 import android.content.Context
@@ -38,7 +38,11 @@ class Phase3(private val context: Context, private val log: (String) -> Unit) {
         md()
         val mm = context.getSystemService(MidiManager::class.java) ?: return finish("No MidiManager on this device.")
         @Suppress("DEPRECATION")
-        val devices = mm.devices.filter { it.properties.getString(MidiDeviceInfo.PROPERTY_MANUFACTURER) == "VST gHost" }
+        // Only this edition's devices (sideload and Play can be installed side by side, same names).
+        val devices = mm.devices.filter {
+            it.properties.getString(MidiDeviceInfo.PROPERTY_MANUFACTURER) == "VST gHost" &&
+                (it.properties.getParcelable<android.content.pm.ServiceInfo>("service_info")?.packageName ?: context.packageName) == context.packageName
+        }
         md("- Android MIDI service lists ${devices.size} VST gHost devices: " +
            devices.joinToString { it.properties.getString(MidiDeviceInfo.PROPERTY_NAME) ?: "?" })
         slots.forEach { Bridge.get(context, it).stop() }  // start cold, like a fresh app

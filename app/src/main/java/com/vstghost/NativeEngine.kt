@@ -49,6 +49,17 @@ object NativeEngine {
     @JvmStatic external fun wlStats(): String
     /** Test hook: current picture as BMP; returns "WxH" or null. */
     @JvmStatic external fun wlDump(path: String): String?
+
+    // ---- Phase 5: native plugins (app/src/main/cpp/native_host.cpp). Main thread only.
+    /** Library already loaded with System.loadLibrary. Returns its info JSON or "ERROR: ...". */
+    @JvmStatic external fun nativeInit(lib: String, context: android.content.Context): String
+    /** Null on success. rate 0 = the output stream's rate. */
+    @JvmStatic external fun nativeOpen(slot: Int, lib: String, rate: Int, maxBlock: Int): String?
+    @JvmStatic external fun nativeClose(slot: Int)
+    @JvmStatic external fun isNative(slot: Int): Boolean
+    /** Attaches the plugin's own editor into [parent], fitted to w x h px. Returns [w, h] or null. */
+    @JvmStatic external fun nativeEditorOpen(slot: Int, parent: android.view.ViewGroup, w: Int, h: Int): IntArray?
+    @JvmStatic external fun nativeEditorClose(slot: Int)
     @JvmStatic external fun resetStats(slot: Int)
 
     // ---- slot-0 conveniences (player, tests)
