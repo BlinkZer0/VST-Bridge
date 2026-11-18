@@ -72,8 +72,20 @@ class MainActivity : Activity() {
             when (i.getIntExtra("phase", 0)) {
                 1 -> startPhase1(i.getIntExtra("block", 256), i.getBooleanExtra("reinstall", false))
                 2 -> startPhase2(i.getIntExtra("seconds", 15), i.getBooleanExtra("reinstall", false))
+                3 -> runTask("PHASE3") { Phase3(this, ::log).runAll() }
                 else -> start(reinstall = i.getBooleanExtra("reinstall", false))
             }
+        }
+    }
+
+    private fun runTask(tag: String, body: () -> Unit) {
+        if (busy) { log("already running"); return }
+        busy = true
+        logView.text = ""
+        worker.execute {
+            try { body(); log("$tag DONE") }
+            catch (t: Throwable) { log("$tag CRASHED: ${Log.getStackTraceString(t)}") }
+            finally { busy = false; runOnUiThread { refreshStatus() } }
         }
     }
 

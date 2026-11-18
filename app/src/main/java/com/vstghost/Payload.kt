@@ -89,6 +89,15 @@ class Payload(private val context: Context) {
         }
     }
 
+    /** True if every soname link exists and points at the current nativeLibraryDir. */
+    fun shimReady(): Boolean = runCatching {
+        val map = context.assets.open(JNILIBS_MAP).bufferedReader().readLines().filter { it.isNotBlank() && !it.startsWith("#") }
+        map.all { line ->
+            val (soname, file) = line.trim().split(Regex("\\s+"))
+            Os.readlink(File(shimDir, soname).path) == File(nativeLibDir, file).path
+        }
+    }.getOrDefault(false)
+
     /** Play edition: soname symlinks into nativeLibraryDir, from payload's jnilibs.map. */
     fun buildShim(): String {
         deleteTree(shimDir)
@@ -159,7 +168,7 @@ fun deleteTree(dir: File) {
     Files.walkFileTree(p, object : SimpleFileVisitor<Path>() {
         override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
             file.toFile().setWritable(true)
-            Files.delete(file); return FileVisitResult.CONTINUE
+            Files.deleteIfExists(file); return FileVisitResult.CONTINUE
         }
         override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult {
             Files.deleteIfExists(file); return FileVisitResult.CONTINUE
@@ -168,7 +177,7 @@ fun deleteTree(dir: File) {
             d.toFile().setWritable(true); d.toFile().setExecutable(true); return FileVisitResult.CONTINUE
         }
         override fun postVisitDirectory(d: Path, exc: IOException?): FileVisitResult {
-            Files.delete(d); return FileVisitResult.CONTINUE
+            Files.deleteIfExists(d); return FileVisitResult.CONTINUE
         }
     })
 }

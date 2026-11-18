@@ -70,6 +70,7 @@ struct Slot {
     std::shared_ptr<BridgeClient> bridge;
     std::atomic<bool> aapOwned{false};
     std::atomic<int> inputMode{0};  // 0 silence, 1 test signal (effects in the app)
+    std::atomic<float> peak{0.0f};  // output peak since the last stats reset (app-mixed slots)
     // Adaptive fill state (touched only by the slot's current consumer thread).
     uint64_t lastUnderruns = 0;
     uint32_t growth = 0;
@@ -152,7 +153,12 @@ public:
             }
             b->read(l_, r_, n);
             b->wakeHost();
-            for (uint32_t k = 0; k < n; ++k) { mixL_[k] += l_[k]; mixR_[k] += r_[k]; }
+            float pk = sl.peak.load(std::memory_order_relaxed);
+            for (uint32_t k = 0; k < n; ++k) {
+                mixL_[k] += l_[k]; mixR_[k] += r_[k];
+                pk = std::max(pk, std::fabs(l_[k]));
+            }
+            sl.peak.store(pk, std::memory_order_relaxed);
         }
         const float g = gain_.load(std::memory_order_relaxed);
         for (uint32_t i = 0; i < n; ++i) { out[2 * i] = mixL_[i] * g; out[2 * i + 1] = mixR_[i] * g; }
@@ -174,7 +180,7 @@ public:
 
     std::vector<double> stats(int slot) {
         std::lock_guard<std::mutex> g(mu_);
-        std::vector<double> v(26, 0.0);
+        std::vector<double> v(28, 0.0);
         v[0] = sampleRate_;
         if (stream_) {
             v[1] = stream_->getFramesPerBurst();
@@ -203,7 +209,9 @@ public:
             v[21] = (double)b->patternMismatches();
             v[22] = (double)b->patternVerified();
             v[23] = VG_LOAD(&s->hostState);
+            v[26] = (double)VG_LOAD(&s->midiRead);  // MIDI messages the host has consumed
         }
+        v[27] = slots[slot].peak.load();
         const double cnt = (double)cbCount_.load();
         v[11] = cnt > 0 ? cbNsTotal_.load() / 1e3 / cnt : 0;
         v[12] = cbNsMax_.load() / 1e3;
@@ -214,6 +222,7 @@ public:
     }
     void resetStats(int slot) {
         cbCount_ = 0; cbNsTotal_ = 0; cbNsMax_ = 0;
+        slots[slot].peak = 0.0f;
         auto b = std::atomic_load(&slots[slot].bridge);
         if (b) { b->resetUnderruns(); if (b->ipc()) VG_STORE(&b->ipc()->maxBlockNs, 0u); }
     }

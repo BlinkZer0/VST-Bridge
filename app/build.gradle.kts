@@ -1,6 +1,5 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
 }
 
 // Output of payload/build.sh (see payload/README.md). Optional at build time:
@@ -9,12 +8,12 @@ val payloadOut = rootProject.file(providers.gradleProperty("vstghost.payloadOut"
 
 android {
     namespace = "com.vstghost"
-    compileSdk = 36
+    compileSdk = 37  // the AAP library (Phase 3) requires compiling against API 37
     ndkVersion = "29.0.14206865"
 
     defaultConfig {
         applicationId = "com.vstghost"
-        minSdk = 28
+        minSdk = 29  // required by the AAP library (Phase 3)
         versionCode = 1
         versionName = "0.0.1-phase0"
         ndk { abiFilters += "arm64-v8a" }
@@ -91,6 +90,8 @@ android {
 dependencies {
     // Low-latency audio (Apache-2.0), named in the project brief.
     implementation("com.google.oboe:oboe:1.11.0")
+    // Audio Plugins For Android (MIT): our bridge slots are AAP plugins (Phase 3).
+    implementation("org.androidaudioplugin:androidaudioplugin:0.12.0")
 }
 
 kotlin {

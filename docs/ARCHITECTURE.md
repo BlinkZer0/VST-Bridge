@@ -125,6 +125,14 @@ Oboe callback (SCHED_FIFO, arm64)                    Host render thread (x86_64 
 - Slots share the same engine and host processes as the standalone app, so a VST that is open in our app and also assigned to slot 2 is one plugin instance, not two.
 - *Assumption, verified in Phase 3:* `aap-juce-simple-host` handles plugins that declare no parameters in XML and supply them at runtime. If it doesn't, the fallback is to declare a fixed block of generic parameters per slot (e.g. P1–P128) and map them to the plugin's real parameters.
 
+**Implemented in Phase 3, as designed:**
+- 8 static AAP entries (`urn:vstghost:slot:inst1..4`, `fx1..4`) served by `libvstghost.so`;
+- 4 `MidiDeviceService` classes;
+- assignments stored in `files/slots.json` (**Slots** button in the app);
+- one bridge per slot (`files/ipc/slotN.shm`), with the Oboe engine mixing every slot not owned by an AAP host.
+
+A slot's Windows host starts on AAP `prepare()` or on the first MIDI message, never on device enumeration. Verified with aap-juce-simple-host (see docs/phase3-report.md).
+
 The AAP `process()` path deserves its own note. An AAP host calls us over synchronous Binder with no priority inheritance, and our service then forwards to the Wine host. The same render-ahead ring applies, so the slot never blocks on the Wine host for longer than its prefill. Phase 3 measures the real numbers; we expect AAP-hosted latency to be worse than our standalone app.
 
 ## 5. Plugin UI before Phase 4

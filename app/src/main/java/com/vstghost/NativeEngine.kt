@@ -81,5 +81,7 @@ object NativeEngine {
         val hostState get() = v[23].toInt()
         val callbackFrames get() = v[24].toInt()
         val streamRestarts get() = v[25].toLong()
+        val midiConsumed get() = v[26].toLong()
+        val peakDb get() = if (v[27] > 0) 20 * Math.log10(v[27]) else -999.0
     }
 }

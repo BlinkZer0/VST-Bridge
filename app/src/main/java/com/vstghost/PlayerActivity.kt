@@ -82,12 +82,17 @@ class PlayerActivity : Activity() {
                 val r = bridge.payload.install(null)
                 if (!r.ok) { setStatus("Runtime install failed: ${r.message}"); return@execute }
             }
-            if (bridge.payload.isPlay) bridge.payload.buildShim()
+            if (bridge.payload.isPlay && !bridge.payload.shimReady()) bridge.payload.buildShim()
             Phase1(this) {}.syncPluginsPublic()
             ui.post { refreshPlugins() }
             bridge.ensureSession()
             NativeEngine.startAudio()
             setStatus("Ready. Pick a plugin and press Load.")
+            // adb: am start -n <pkg>/com.vstghost.PlayerActivity --es assign "1=E-Piano;5=Pedal Faster"
+            intent?.getStringExtra("assign")?.split(";")?.forEach { kv ->
+                val (k, v) = kv.split("=", limit = 2).let { it[0].trim() to it.getOrNull(1)?.trim() }
+                k.toIntOrNull()?.takeIf { it in 1..8 }?.let { SlotManager.assign(it, v?.ifEmpty { null }) }
+            }
             // adb: am start -n <pkg>/com.vstghost.PlayerActivity --es load "E-Piano"
             intent?.getStringExtra("load")?.let { name ->
                 ui.post {
@@ -132,6 +137,7 @@ class PlayerActivity : Activity() {
         top.addView(pluginSpinner, LinearLayout.LayoutParams(0, dp(40), 1f))
         btn("Load", top) { loadSelected() }
         btn("Presets", top) { presets() }
+        btn("Slots", top) { slotsDialog() }
         btn("Stats", top) { statsPanel.visibility = if (statsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE }
         btn("Tests", top) { startActivity(Intent(this, MainActivity::class.java)) }
         root.addView(top)
@@ -345,6 +351,33 @@ class PlayerActivity : Activity() {
             })
             return row
         }
+    }
+
+    // ------------------------------------------------------------------ slots (Phase 3)
+
+    /** Assign bridged VSTs to the fixed slots other apps see (AAP plugins / virtual MIDI devices). */
+    private fun slotsDialog() {
+        val current = SlotManager.assignments()
+        val slots = (1..8).toList()
+        val items = slots.map { s ->
+            "${SlotManager.label(s)}:  ${current[s] ?: "(empty)"}" +
+                (if (s < SlotManager.FIRST_FX) "   ·  AAP + MIDI device" else "   ·  AAP effect")
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Bridge slots (seen by other apps)")
+            .setItems(items) { _, which -> pickForSlot(slots[which]) }
+            .setNegativeButton("Close", null).show()
+    }
+
+    private fun pickForSlot(slot: Int) {
+        val names = plugins.map { it.name.removeSuffix(".vst3") }
+        val choices = (listOf("(empty)") + names).toTypedArray()
+        AlertDialog.Builder(this).setTitle(SlotManager.label(slot)).setItems(choices) { _, which ->
+            SlotManager.assign(slot, if (which == 0) null else names[which - 1])
+            status.text = "${SlotManager.label(slot)} → ${if (which == 0) "(empty)" else names[which - 1]}. " +
+                          "Other apps pick it up the next time they load that slot."
+            slotsDialog()
+        }.show()
     }
 
     // ------------------------------------------------------------------ presets

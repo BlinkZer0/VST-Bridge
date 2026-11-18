@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  VST gHost bridge slots as AAP plugins. AAP plugin lists are static (fixed at APK build time),
+  so these are fixed "slots": the user assigns any bridged Windows VST to a slot inside the app.
+  Parameters are not listed here: they come from the assigned VST at runtime through the
+  parameters extension. All slots are served by libvstghost.so (app/src/main/cpp/aap_plugin.cpp).
+-->
+<plugins xmlns="urn:org.androidaudioplugin.core">
+  <plugin name="VST gHost Inst 1" category="Instrument" developer="VST gHost" unique-id="urn:vstghost:slot:inst1" library="libvstghost.so">
+    <extensions>
+      <extension uri="urn://androidaudioplugin.org/extensions/state/v4" />
+      <extension uri="urn://androidaudioplugin.org/extensions/midi2/v3" />
+      <extension uri="urn://androidaudioplugin.org/extensions/parameters/v4" />
+    </extensions>
+  </plugin>
+  <plugin name="VST gHost Inst 2" category="Instrument" developer="VST gHost" unique-id="urn:vstghost:slot:inst2" library="libvstghost.so">
+    <extensions>
+      <extension uri="urn://androidaudioplugin.org/extensions/state/v4" />
+      <extension uri="urn://androidaudioplugin.org/extensions/midi2/v3" />
+      <extension uri="urn://androidaudioplugin.org/extensions/parameters/v4" />
+    </extensions>
+  </plugin>
+  <plugin name="VST gHost Inst 3" category="Instrument" developer="VST gHost" unique-id="urn:vstghost:slot:inst3" library="libvstghost.so">
+    <extensions>
+      <extension uri="urn://androidaudioplugin.org/extensions/state/v4" />
+      <extension uri="urn://androidaudioplugin.org/extensions/midi2/v3" />
+      <extension uri="urn://androidaudioplugin.org/extensions/parameters/v4" />
+    </extensions>
+  </plugin>
+  <plugin name="VST gHost Inst 4" category="Instrument" developer="VST gHost" unique-id="urn:vstghost:slot:inst4" library="libvstghost.so">
+    <extensions>
+      <extension uri="urn://androidaudioplugin.org/extensions/state/v4" />
+      <extension uri="urn://androidaudioplugin.org/extensions/midi2/v3" />
+      <extension uri="urn://androidaudioplugin.org/extensions/parameters/v4" />
+    </extensions>
+  </plugin>
+  <plugin name="VST gHost FX 1" category="Effect" developer="VST gHost" unique-id="urn:vstghost:slot:fx1" library="libvstghost.so">
+    <extensions>
+      <extension uri="urn://androidaudioplugin.org/extensions/state/v4" />
+      <extension uri="urn://androidaudioplugin.org/extensions/midi2/v3" />
+      <extension uri="urn://androidaudioplugin.org/extensions/parameters/v4" />
+    </extensions>
+  </plugin>
+  <plugin name="VST gHost FX 2" category="Effect" developer="VST gHost" unique-id="urn:vstghost:slot:fx2" library="libvstghost.so">
+    <extensions>
+      <extension uri="urn://androidaudioplugin.org/extensions/state/v4" />
+      <extension uri="urn://androidaudioplugin.org/extensions/midi2/v3" />
+      <extension uri="urn://androidaudioplugin.org/extensions/parameters/v4" />
+    </extensions>
+  </plugin>
+  <plugin name="VST gHost FX 3" category="Effect" developer="VST gHost" unique-id="urn:vstghost:slot:fx3" library="libvstghost.so">
+    <extensions>
+      <extension uri="urn://androidaudioplugin.org/extensions/state/v4" />
+      <extension uri="urn://androidaudioplugin.org/extensions/midi2/v3" />
+      <extension uri="urn://androidaudioplugin.org/extensions/parameters/v4" />
+    </extensions>
+  </plugin>
+  <plugin name="VST gHost FX 4" category="Effect" developer="VST gHost" unique-id="urn:vstghost:slot:fx4" library="libvstghost.so">
+    <extensions>
+      <extension uri="urn://androidaudioplugin.org/extensions/state/v4" />
+      <extension uri="urn://androidaudioplugin.org/extensions/midi2/v3" />
+      <extension uri="urn://androidaudioplugin.org/extensions/parameters/v4" />
+    </extensions>
+  </plugin>
+</plugins>
