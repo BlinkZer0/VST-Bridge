@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Installs the build dependencies for payload/build.sh on Ubuntu 24.04 (WSL2 or Docker).
+set -euo pipefail
+SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
+$SUDO apt-get update
+DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y --no-install-recommends \
+    build-essential ca-certificates curl file git python3 cmake ninja-build \
+    xz-utils zstd patch flex bison gettext pkg-config \
+    gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+    gcc-14-aarch64-linux-gnu \
+    gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64

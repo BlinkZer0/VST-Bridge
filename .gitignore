@@ -1,0 +1,18 @@
+# Gradle / Android
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+.cxx/
+.externalNativeBuild/
+captures/
+.idea/
+*.iml
+
+# Payload build outputs and caches (never commit binaries)
+payload/out/
+payload/cache/
+payload/work/
+*.tar.zst
+*.tzst
