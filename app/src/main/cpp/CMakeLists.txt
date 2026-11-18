@@ -31,6 +31,8 @@ add_library(vstghost SHARED
     engine.cpp
     aap_plugin.cpp
     bench.c
+    wl_jni.cpp
+    ${SHARED_DIR}/wl/vg_wl.cpp
     ${SHARED_DIR}/ipc/bridge_client.cpp)
 
 target_include_directories(vstghost PRIVATE ${SHARED_DIR} ${SHARED_DIR}/ipc)

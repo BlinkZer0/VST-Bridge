@@ -1,0 +1,7 @@
+V_1.0.0 {
+  global:
+    rxkb_context_new; rxkb_context_parse_default_ruleset; rxkb_context_unref;
+    rxkb_layout_first; rxkb_layout_next; rxkb_layout_get_name; rxkb_layout_get_variant;
+    rxkb_layout_get_description;
+  local: *;
+};

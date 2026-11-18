@@ -77,8 +77,8 @@ class PlayerActivity : Activity() {
         midi = MidiInput(this) { s -> ui.post { midiStatus.text = s } }.also { it.start() }
         io.execute {
             setStatus("Preparing Wine…")
-            if (bridge.payload.installedVersion == null) {
-                setStatus("Installing the Windows runtime (first launch)…")
+            if (bridge.payload.needsInstall()) {
+                setStatus("Installing the Windows runtime…")
                 val r = bridge.payload.install(null)
                 if (!r.ok) { setStatus("Runtime install failed: ${r.message}"); return@execute }
             }
@@ -136,6 +136,10 @@ class PlayerActivity : Activity() {
         pluginSpinner = Spinner(this)
         top.addView(pluginSpinner, LinearLayout.LayoutParams(0, dp(40), 1f))
         btn("Load", top) { loadSelected() }
+        btn("Editor", top) {
+            if (!bridge.isRunning) android.widget.Toast.makeText(this, "Load a plugin first", android.widget.Toast.LENGTH_SHORT).show()
+            else startActivity(Intent(this, EditorActivity::class.java).putExtra(EditorActivity.EXTRA_SLOT, 0))
+        }
         btn("Presets", top) { presets() }
         btn("Slots", top) { slotsDialog() }
         btn("Stats", top) { statsPanel.visibility = if (statsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE }

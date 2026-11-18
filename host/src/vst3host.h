@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -95,6 +96,15 @@ public:
     std::string paramText(uint32_t id, double normalized);
     bool getState(std::string& component, std::string& controller);
     bool setState(const std::string& component, const std::string& controller, std::string& err);
+
+    // ---- Editor (Phase 4, main thread). hwnd: parent window to embed into.
+    bool openEditor(void* hwnd, int& width, int& height, bool& resizable, std::string& err);
+    // A size the plugin asked for via IPlugFrame::resizeView since the last call (true if any).
+    bool takeEditorResizeRequest(int& width, int& height);
+    void editorHostResized(int width, int height);  // tell the view its new size
+    void closeEditor();
+    // Called (main thread) when the plugin's editor changes a parameter (IComponentHandler::performEdit).
+    void setEditCallback(std::function<void(uint32_t id, double normalized)> cb);
 
     struct Impl;
     std::unique_ptr<Impl> impl;

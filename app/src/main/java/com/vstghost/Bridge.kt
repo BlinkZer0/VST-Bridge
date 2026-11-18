@@ -24,6 +24,7 @@ class Bridge private constructor(context: Context, val slot: Int) {
         /** One persistent Wine session for all hosts (saves ~1 s per load). */
         @Volatile private var sessionStarted = false
         fun ensureSession(payload: Payload) {
+            EditorDisplay.ensure(payload)  // before any Wine process: see EditorDisplay
             if (sessionStarted && File(payload.root, "prefix/.wineserver").listFiles()?.any { File(it, "socket").exists() } == true) return
             // `wineserver -p` forks a daemon that inherits stdout: never read its output to EOF
             // (that blocks for as long as the daemon lives). Discard it and wait for the launcher only.

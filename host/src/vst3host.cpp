@@ -4,6 +4,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <functional>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -22,6 +23,7 @@
 #include "pluginterfaces/vst/ivstmidicontrollers.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "pluginterfaces/vst/ivstprocesscontext.h"
+#include "pluginterfaces/gui/iplugview.h"
 #include "util.h"
 
 using namespace Steinberg;
@@ -141,7 +143,12 @@ public:
         *obj = nullptr; return kNoInterface;
     }
     tresult PLUGIN_API beginEdit(ParamID) override { return kResultOk; }
-    tresult PLUGIN_API performEdit(ParamID, ParamValue) override { return kResultOk; }
+    // Edits made in the plugin's own editor: the host forwards them to the audio processor.
+    tresult PLUGIN_API performEdit(ParamID id, ParamValue v) override {
+        if (onEdit) onEdit(id, v);
+        return kResultOk;
+    }
+    std::function<void(uint32_t, double)> onEdit;
     tresult PLUGIN_API endEdit(ParamID) override { return kResultOk; }
     tresult PLUGIN_API restartComponent(int32 flags) override { restartFlags |= flags; return kResultOk; }
     std::atomic<int32> restartFlags{0};
@@ -245,6 +252,26 @@ private:
     int32 used_ = 0;
 };
 
+// Receives the editor's resize requests (plugin-initiated). The host window follows on the
+// main thread via Plugin::takeEditorResizeRequest().
+class PlugFrame : public IPlugFrame {
+public:
+    VG_REFCOUNT
+    tresult PLUGIN_API queryInterface(const TUID _iid, void** obj) override {
+        VG_QI(IPlugFrame) VG_QI(FUnknown)
+        *obj = nullptr; return kNoInterface;
+    }
+    tresult PLUGIN_API resizeView(IPlugView* view, ViewRect* r) override {
+        if (!r) return kInvalidArgument;
+        pendingW = r->getWidth(); pendingH = r->getHeight(); pending = true;
+        if (view) view->onSize(r);
+        return kResultOk;
+    }
+    bool pending = false;
+    int pendingW = 0, pendingH = 0;
+    virtual ~PlugFrame() = default;
+};
+
 std::string tuidHex(const TUID t) {
     char b[33];
     for (int i = 0; i < 16; ++i) snprintf(b + 2 * i, 3, "%02X", (unsigned char)t[i]);
@@ -332,7 +359,12 @@ struct Plugin::Impl {
         }
     }
 
+    IPlugView* view = nullptr;
+    PlugFrame* frame = nullptr;
+
     ~Impl() {
+        if (view) { view->removed(); view->setFrame(nullptr); view->release(); view = nullptr; }
+        if (frame) { frame->release(); frame = nullptr; }
         if (active) { processor->setProcessing(false); component->setActive(false); }
         if (events) events->release();
         if (changes) changes->release();
@@ -713,6 +745,55 @@ bool Plugin::getState(std::string& comp, std::string& ctrl) {
     }
     return ok;
 }
+
+// ---------------------------------------------------------------- editor
+
+bool Plugin::openEditor(void* hwnd, int& width, int& height, bool& resizable, std::string& err) {
+    Impl& I = *impl;
+    if (!I.controller) { err = "plugin has no edit controller"; return false; }
+    closeEditor();
+    I.view = I.controller->createView(ViewType::kEditor);
+    if (!I.view) { err = "createView(\"editor\") returned null (plugin has no GUI?)"; return false; }
+    if (I.view->isPlatformTypeSupported(kPlatformTypeHWND) != kResultTrue) {
+        err = "editor does not support HWND"; I.view->release(); I.view = nullptr; return false;
+    }
+    I.frame = new PlugFrame;
+    I.view->setFrame(I.frame);
+    ViewRect r{};
+    I.view->getSize(&r);
+    width = r.getWidth(); height = r.getHeight();
+    resizable = I.view->canResize() == kResultTrue;
+    if (I.view->attached(hwnd, kPlatformTypeHWND) != kResultOk) {
+        err = "IPlugView::attached failed"; closeEditor(); return false;
+    }
+    // Some editors settle their size only after attach.
+    if (I.view->getSize(&r) == kResultOk && r.getWidth() > 0) { width = r.getWidth(); height = r.getHeight(); }
+    return true;
+}
+
+bool Plugin::takeEditorResizeRequest(int& width, int& height) {
+    Impl& I = *impl;
+    if (!I.frame || !I.frame->pending) return false;
+    I.frame->pending = false;
+    width = I.frame->pendingW; height = I.frame->pendingH;
+    return true;
+}
+
+void Plugin::editorHostResized(int width, int height) {
+    Impl& I = *impl;
+    if (!I.view) return;
+    ViewRect r{0, 0, width, height};
+    if (I.view->checkSizeConstraint(&r) == kResultTrue) {}
+    I.view->onSize(&r);
+}
+
+void Plugin::closeEditor() {
+    Impl& I = *impl;
+    if (I.view) { I.view->removed(); I.view->setFrame(nullptr); I.view->release(); I.view = nullptr; }
+    if (I.frame) { I.frame->release(); I.frame = nullptr; }
+}
+
+void Plugin::setEditCallback(std::function<void(uint32_t, double)> cb) { impl->handler->onEdit = std::move(cb); }
 
 bool Plugin::setState(const std::string& comp, const std::string& ctrl, std::string& err) {
     Impl& I = *impl;

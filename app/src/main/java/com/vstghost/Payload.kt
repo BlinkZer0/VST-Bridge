@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+﻿// SPDX-License-Identifier: GPL-3.0-or-later
 package com.vstghost
 
 import android.content.Context
@@ -30,6 +30,10 @@ class Payload(private val context: Context) {
         val PLACEHOLDER = "/vstghost_root" + "_".repeat(50)
         const val ARCHIVE_NAME = "vstghost-payload.tar.zst"
         const val JNILIBS_MAP = "jnilibs.map"
+        const val WAYLAND_SOCKET = "wl-0"
+        /** Must match X64LIBS (+ the xkbregistry stub) in payload/build.sh. */
+        const val EMULATED_LIBS = "libwayland-client.so.0:libffi.so.8:libxkbcommon.so.0:libxkbregistry.so.0:" +
+            "libfreetype.so.6:libpng16.so.16:libz.so.1:libbz2.so.1.0:libbz2.so.1:libbrotlidec.so.1:libbrotlicommon.so.1"
     }
 
     val isPlay: Boolean = BuildConfig.EDITION == "play"
@@ -39,6 +43,27 @@ class Payload(private val context: Context) {
 
     val installedVersion: String?
         get() = File(root, ".installed").takeIf { it.isFile }?.readText()?.trim()
+
+    /**
+     * Identity of the archive we would install now: APK update time for the bundled asset (Play),
+     * size + date of the pushed file (sideload). Null if there is no archive.
+     */
+    private fun sourceStamp(): String? {
+        if (isPlay) runCatching { context.assets.openFd(ARCHIVE_NAME).use { return "asset:${it.length}:" +
+            context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime } }
+        for (path in archiveCandidates().filterNot { it.startsWith("asset:") }) {
+            val f = File(path)
+            if (f.isFile) return "${f.path}:${f.length()}:${f.lastModified()}"
+        }
+        return null
+    }
+
+    /** No payload yet, or a different archive than the installed one is available. */
+    fun needsInstall(): Boolean {
+        if (installedVersion == null) return true
+        val now = sourceStamp() ?: return false
+        return File(root, ".installed-source").takeIf { it.isFile }?.readText()?.trim() != now
+    }
 
     /** Candidate archive locations, in the order we try them. */
     fun archiveCandidates(): List<String> = buildList {
@@ -82,6 +107,7 @@ class Payload(private val context: Context) {
             File(root, "home").mkdirs()
             val version = File(root, "VERSION").takeIf { it.isFile }?.readText()?.trim() ?: "unknown"
             File(root, ".installed").writeText(version)
+            sourceStamp()?.let { File(root, ".installed-source").writeText(it) }
             if (isPlay) buildShim()
             return InstallResult(true, "Installed payload $version", res, src.label, src.length)
         } finally {
@@ -135,6 +161,7 @@ class Payload(private val context: Context) {
 
     fun environment(extra: Map<String, String> = emptyMap()): Map<String, String> {
         val r = root.path
+        if (root.isDirectory) EditorDisplay.ensure(this)  // listening before any Wine process starts
         return linkedMapOf(
             "HOME" to "$r/home",
             "TMPDIR" to "$r/tmp",
@@ -143,7 +170,14 @@ class Payload(private val context: Context) {
             "LANG" to "C",
             "PATH" to "$r/wine/bin:/system/bin",
             "LD_LIBRARY_PATH" to if (isPlay) shimDir.path else "$r/glibc/lib",
-            "BOX64_LD_LIBRARY_PATH" to "$r/box64/x64lib",
+            "BOX64_LD_LIBRARY_PATH" to "$r/box64/x64lib:$r/x64libs",
+            // x86_64 libraries we ship for Wine's Wayland driver and fonts: run them emulated
+            // (Box64 would otherwise look for native arm64 builds, which the payload doesn't have).
+            "BOX64_EMULATED_LIBS" to EMULATED_LIBS,
+            // Plugin editors: Wine's Wayland driver talks to our compositor (EditorDisplay).
+            "XDG_RUNTIME_DIR" to "$r/run",
+            "WAYLAND_DISPLAY" to "$r/run/$WAYLAND_SOCKET",
+            "VSTGHOST_WL_ONE_TOPLEVEL" to "1",
             "BOX64_PATH" to "$r/wine/bin",
             "BOX64_RCFILE" to "$r/etc/box64.box64rc",
             "BOX64_DYNACACHE" to "0",

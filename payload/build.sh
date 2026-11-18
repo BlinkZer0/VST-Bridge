@@ -8,7 +8,7 @@
 #   jnilibs/arm64-v8a/*.so            Play edition: arm64 loader, Box64 and glibc as lib*.so
 #   play-assets/                      Play edition: payload + soname map, bundled as APK assets
 #
-# Usage: payload/build.sh [step...]   steps: glibc box64 wine prefix hello etc pack play (default: all)
+# Usage: payload/build.sh [step...]   steps: glibc box64 wine x64libs prefix hello host etc pack play (default: all)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -95,7 +95,7 @@ step_box64() {
 }
 
 step_wine() {
-    log "Wine ${WINE_VERSION} (x86_64 only, headless)"
+    log "Wine ${WINE_VERSION} (x86_64 only; Wayland driver for plugin editors, FreeType for fonts)"
     local t src="$WORK/wine-src" b="$WORK/wine-build" inst="$WORK/wine-install"
     t="$(fetch "$WINE_URL" "$WINE_SHA256" "wine-${WINE_VERSION}.tar.xz")"
     rm -rf "$src" && mkdir -p "$src"
@@ -108,8 +108,8 @@ step_wine() {
     (cd "$b" && "$src/configure" \
         --prefix=/opt/vstghost-wine \
         --enable-archs=x86_64 --disable-tests \
-        --without-x --without-wayland --without-opengl --without-vulkan --without-sdl \
-        --without-freetype --without-fontconfig \
+        --without-x --with-wayland --without-opengl --without-vulkan --without-sdl \
+        --with-freetype --without-fontconfig \
         --without-pulse --without-alsa --without-oss --without-gstreamer --without-ffmpeg \
         --without-cups --without-dbus --without-sane --without-gphoto --without-v4l2 \
         --without-usb --without-udev --without-pcap --without-pcsclite --without-capi \
@@ -128,6 +128,39 @@ step_wine() {
     find "$STAGE/wine/lib/wine/x86_64-unix" -name '*.so' -exec objdump -p {} \; | awk '/NEEDED/{print $2}' | sort | uniq -c
 }
 
+# x86_64 libraries the Wine unix side needs at runtime (run emulated by Box64; see BOX64_EMULATED_LIBS
+# in app/.../Payload.kt). Copied from the build host's Ubuntu 24.04 packages, which Wine was compiled
+# against; exact package versions go into x64libs/MANIFEST. libxkbregistry is a stub (payload/stubs).
+X64LIBS=(libwayland-client.so.0 libffi.so.8 libxkbcommon.so.0
+         libfreetype.so.6 libpng16.so.16 libz.so.1 libbz2.so.1.0 libbrotlidec.so.1 libbrotlicommon.so.1)
+step_x64libs() {
+    log "x86_64 runtime libraries for Wine (Wayland client, xkbcommon, FreeType)"
+    local d="$STAGE/x64libs" l real pkg
+    rm -rf "$d" && mkdir -p "$d"
+    : > "$d/MANIFEST"
+    for l in "${X64LIBS[@]}"; do
+        real="$(readlink -f "/usr/lib/x86_64-linux-gnu/$l")"
+        [ -f "$real" ] || { echo "missing $l (see payload/setup-ubuntu.sh)"; exit 1; }
+        cp "$real" "$d/$l"
+        strip --strip-unneeded "$d/$l"
+        pkg="$(dpkg -S "$real" 2>/dev/null | head -1 | cut -d: -f1-2)"
+        printf '%s\t%s\t%s\n' "$l" "$pkg" "$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null)" >> "$d/MANIFEST"
+    done
+    gcc -shared -fPIC -O2 -s -Wl,-soname,libxkbregistry.so.0 -Wl,--version-script="$HERE/stubs/xkbregistry_stub.map" \
+        "$HERE/stubs/xkbregistry_stub.c" -o "$d/libxkbregistry.so.0"
+    printf 'libxkbregistry.so.0\tstub\tpayload/stubs/xkbregistry_stub.c\n' >> "$d/MANIFEST"
+    cat "$d/MANIFEST"
+    # Every library a Wine unix module needs must be shipped here, in Box64's x64lib, or be glibc (wrapped natively).
+    local miss=0 n
+    for n in $(find "$STAGE/wine/lib/wine/x86_64-unix" -name '*.so' -exec objdump -p {} \; | awk '/NEEDED/{print $2}' | sort -u) \
+             $(objdump -p "$d"/*.so* | awk '/NEEDED/{print $2}' | sort -u); do
+        case "$n" in ntdll.so|win32u.so|libc.so.6|libm.so.6|libdl.so.2|libpthread.so.0|librt.so.1|ld-linux-x86-64.so.2) continue;; esac
+        [ -f "$d/$n" ] || [ -f "$STAGE/box64/x64lib/$n" ] || { echo "NOT SHIPPED: $n"; miss=1; }
+    done
+    [ "$miss" = 0 ] || exit 1
+    du -sh "$d"
+}
+
 step_prefix() {
     log "WINEPREFIX (created natively on the build host)"
     rm -rf "$STAGE/prefix"
@@ -136,11 +169,13 @@ step_prefix() {
         WINEPREFIX="$STAGE/prefix" WINEDEBUG=-all \
         WINEDLLOVERRIDES="mscoree,mshtml=;winemenubuilder.exe=d" \
         "$STAGE/wine/bin/wine" wineboot -i
-    # Headless: Wine's "null" graphics driver lets apps create (invisible) windows. Without it,
+    # Graphics: our in-app Wayland compositor (plugin editors, Phase 4) when it is reachable, else
+    # Wine's "null" driver, which still lets apps create (invisible) windows. With no driver at all,
     # nodrv_CreateWindow refuses every non-message window, e.g. JUCE's hidden message window.
+    # (The build host has no compositor at $WAYLAND_DISPLAY here, so wineboot itself uses null.)
     env -i PATH="$STAGE/wine/bin:/usr/bin:/bin" HOME="$WORK/home" USER=vstghost \
         WINEPREFIX="$STAGE/prefix" WINEDEBUG=-all \
-        "$STAGE/wine/bin/wine" reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d null /f
+        "$STAGE/wine/bin/wine" reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d wayland,null /f
     env -i PATH="$STAGE/wine/bin:/usr/bin:/bin" WINEPREFIX="$STAGE/prefix" "$STAGE/wine/bin/wineserver" -w
     # Never re-run wineboot's update on the phone (slow): prefix and Wine ship together.
     echo disable > "$STAGE/prefix/.update-timestamp"
@@ -175,7 +210,7 @@ step_host() {
         x86_64-w64-mingw32-g++ "${flags[@]}" -c "$f" -o "$b/$(basename "${f%.cpp}").o"
     done
     mkdir -p "$STAGE/host" "$STAGE/tests"
-    x86_64-w64-mingw32-g++ -municode -static -s -o "$STAGE/host/vstghost-host.exe" "$b"/*.o -lole32 -luuid
+    x86_64-w64-mingw32-g++ -municode -static -s -o "$STAGE/host/vstghost-host.exe" "$b"/*.o -lole32 -luuid -lgdi32 -luser32
     file "$STAGE/host/vstghost-host.exe"
     python3 "$REPO/tools/make_test_midi.py" "$STAGE/tests/phase1.mid"
 }
@@ -257,7 +292,7 @@ PY
 }
 
 STEPS=("$@")
-[ ${#STEPS[@]} -eq 0 ] && STEPS=(glibc box64 wine prefix hello host etc pack play)
+[ ${#STEPS[@]} -eq 0 ] && STEPS=(glibc box64 wine x64libs prefix hello host etc pack play)
 mkdir -p "$WORK" "$STAGE"
 for s in "${STEPS[@]}"; do "step_$s"; done
 log "done: $OUT"

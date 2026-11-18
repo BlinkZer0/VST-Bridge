@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "editor.h"
 #include "ipc/vg_ipc.h"
 #include "linux_sys.h"
 #include "util.h"
@@ -30,6 +31,16 @@ std::atomic<bool> g_quit{false};
 constexpr size_t kParamQ = 1024;
 BlockParam g_pq[kParamQ];
 std::atomic<uint64_t> g_pqWrite{0}, g_pqRead{0};
+EditorWindow* g_editor = nullptr;
+
+// Main thread only (single producer): hand a parameter change to the render thread.
+void queueParam(uint32_t id, double v) {
+    uint64_t w = g_pqWrite.load(std::memory_order_relaxed);
+    if (w - g_pqRead.load(std::memory_order_acquire) < kParamQ) {
+        g_pq[w % kParamQ] = {id, 0, v};
+        g_pqWrite.store(w + 1, std::memory_order_release);
+    }
+}
 
 void wake(uint32_t* w) {
     VG_ADD(w, 1u);
@@ -221,11 +232,7 @@ std::string handle(const std::string& req) {
         uint32_t id = (uint32_t)strtoul(a[1].c_str(), nullptr, 10);
         double v = std::clamp(strtod(a[2].c_str(), nullptr), 0.0, 1.0);
         p.setParam(id, v);
-        uint64_t w = g_pqWrite.load(std::memory_order_relaxed);
-        if (w - g_pqRead.load(std::memory_order_acquire) < kParamQ) {
-            g_pq[w % kParamQ] = {id, 0, v};
-            g_pqWrite.store(w + 1, std::memory_order_release);
-        }
+        queueParam(id, v);
         j.boolean("ok", true).num("id", id).num("value", p.getParam(id)).str("text", p.paramText(id, p.getParam(id)));
     } else if (cmd == "get_state") {
         std::string c, k;
@@ -236,6 +243,20 @@ std::string handle(const std::string& req) {
         bool ok = p.setState(b64dec(a[1]), b64dec(a[2]), err);
         j.boolean("ok", ok);
         if (!ok) j.str("error", err);
+    } else if (cmd == "editor_open") {
+        std::string err;
+        const double t0 = nowMs();
+        const bool ok = g_editor && g_editor->open(p, err);
+        j.boolean("ok", ok).num("openMs", nowMs() - t0);
+        if (ok) j.num("width", g_editor->width()).num("height", g_editor->height()).boolean("resizable", g_editor->resizable());
+        else j.str("error", g_editor ? err : "no editor support");
+    } else if (cmd == "editor_close") {
+        if (g_editor) g_editor->close();
+        j.boolean("ok", true);
+    } else if (cmd == "editor_state") {
+        const bool open = g_editor && g_editor->isOpen();
+        j.boolean("ok", true).boolean("open", open);
+        if (open) j.num("width", g_editor->width()).num("height", g_editor->height());
     } else {
         j.boolean("ok", false).str("error", "unknown command");
     }
@@ -302,6 +323,10 @@ int cmdServe(const std::wstring& pluginPath, const std::wstring& shmPath, bool q
         return 2;
     }
     g_plugin = plugin.get();
+    // Knob moves in the plugin's own editor reach the processor like our `set` requests do.
+    plugin->setEditCallback([](uint32_t id, double v) { queueParam(id, v); });
+    EditorWindow editor;
+    g_editor = &editor;
 
     // Pre-roll so Box64 translates the DSP code before anyone plays: silence, a chord, release.
     {
@@ -348,12 +373,16 @@ int cmdServe(const std::wstring& pluginPath, const std::wstring& shmPath, bool q
             continue;
         }
         pumpMessages(0);
+        if (editor.isOpen()) editor.poll();
         if (nowMs() - lastParentCheck > 500) {
             lastParentCheck = nowMs();
             if (linux_sys::getppid() != parent) { fprintf(stderr, "serve: parent gone, exiting\n"); break; }
         }
-        waitOn(&s->ctrlWake, seen, 10'000'000);
+        // An open editor wants its input and paint messages promptly.
+        waitOn(&s->ctrlWake, seen, editor.isOpen() ? 4'000'000 : 10'000'000);
     }
+    editor.close();
+    g_editor = nullptr;
     g_quit = true;
     VG_ADD(&s->hostWake, 1u);
     if (g_futex) linux_sys::futexWake(&s->hostWake, 8);

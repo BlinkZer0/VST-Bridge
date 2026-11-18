@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "editor.h"
 #include "midifile.h"
 #include "serve.h"
 #include "util.h"
@@ -255,6 +256,15 @@ int wmain(int argc, wchar_t** argv) {
     if (cmd == L"scan") rc = cmdScan(target);
     else if (cmd == L"info") rc = cmdInfo(target);
     else if (cmd == L"render") rc = cmdRender(target, argc - 3, argv + 3);
+    else if (cmd == L"editor") {
+        int seconds = 10;
+        std::wstring shot;
+        for (int i = 3; i < argc; ++i) {
+            if (std::wstring(argv[i]) == L"--seconds" && i + 1 < argc) seconds = _wtoi(argv[++i]);
+            else if (std::wstring(argv[i]) == L"--shot" && i + 1 < argc) shot = toWinPath(argv[++i]);
+        }
+        rc = cmdEditor(target, seconds, shot, &g_stage);
+    }
     else if (cmd == L"serve") {
         std::wstring shm;
         bool quiet = false, pattern = false;

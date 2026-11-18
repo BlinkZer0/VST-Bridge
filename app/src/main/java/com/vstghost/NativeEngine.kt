@@ -38,6 +38,17 @@ object NativeEngine {
     @JvmStatic external fun probeResult(slot: Int): Long
     @JvmStatic external fun setVerifyPattern(slot: Int, on: Boolean)
     @JvmStatic external fun stats(slot: Int): DoubleArray
+
+    // ---- Phase 4: in-app Wayland compositor for plugin editors (app/src/main/cpp/wl_jni.cpp)
+    /** Null on success. */
+    @JvmStatic external fun wlStart(socketPath: String, width: Int, height: Int): String?
+    /** See wl_jni.cpp: serial, `have` if unchanged, -1 = buffer too small, -2 = not running. */
+    @JvmStatic external fun wlSnapshot(have: Long, buf: IntArray?, meta: IntArray): Long
+    @JvmStatic external fun wlPointer(x: Float, y: Float, button: Int)
+    @JvmStatic external fun wlScroll(notches: Float)
+    @JvmStatic external fun wlStats(): String
+    /** Test hook: current picture as BMP; returns "WxH" or null. */
+    @JvmStatic external fun wlDump(path: String): String?
     @JvmStatic external fun resetStats(slot: Int)
 
     // ---- slot-0 conveniences (player, tests)

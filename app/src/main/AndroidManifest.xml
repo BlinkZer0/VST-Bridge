@@ -25,6 +25,14 @@
             </intent-filter>
         </activity>
 
+        <!-- A plugin's own editor (Phase 4); exported so it can be opened over adb for tests. -->
+        <activity
+            android:name=".EditorActivity"
+            android:exported="true"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+
         <!-- Test harness (Phase 0-2 reports); also driven by adb autorun. -->
         <activity
             android:name=".MainActivity"

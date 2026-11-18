@@ -52,7 +52,7 @@ object SlotManager {
     private fun prepareRuntime(): Payload = synchronized(runtimeLock) {
         val payload = Payload(app)
         if (!runtimeReady) {
-            if (payload.installedVersion == null) payload.install(null)
+            if (payload.needsInstall()) payload.install(null)
             if (payload.isPlay && !payload.shimReady()) payload.buildShim()
             Phase1(app) {}.syncPluginsPublic()
             runtimeReady = true
