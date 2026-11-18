@@ -136,6 +136,11 @@ step_prefix() {
         WINEPREFIX="$STAGE/prefix" WINEDEBUG=-all \
         WINEDLLOVERRIDES="mscoree,mshtml=;winemenubuilder.exe=d" \
         "$STAGE/wine/bin/wine" wineboot -i
+    # Headless: Wine's "null" graphics driver lets apps create (invisible) windows. Without it,
+    # nodrv_CreateWindow refuses every non-message window, e.g. JUCE's hidden message window.
+    env -i PATH="$STAGE/wine/bin:/usr/bin:/bin" HOME="$WORK/home" USER=vstghost \
+        WINEPREFIX="$STAGE/prefix" WINEDEBUG=-all \
+        "$STAGE/wine/bin/wine" reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d null /f
     env -i PATH="$STAGE/wine/bin:/usr/bin:/bin" WINEPREFIX="$STAGE/prefix" "$STAGE/wine/bin/wineserver" -w
     # Never re-run wineboot's update on the phone (slow): prefix and Wine ship together.
     echo disable > "$STAGE/prefix/.update-timestamp"
@@ -155,6 +160,24 @@ step_hello() {
         -I"$REPO/shared" "$HERE/tests/hello.c" -o "$STAGE/tests/hello.exe"
     x86_64-w64-mingw32-strip "$STAGE/tests/hello.exe"
     file "$STAGE/tests/hello.exe"
+}
+
+# Bridge host (MinGW x86_64 PE) + Phase 1 test MIDI.
+step_host() {
+    log "bridge host (vstghost-host.exe)"
+    local t pi="$WORK/vst3pi" b="$WORK/host-build"
+    t="$(fetch "$VST3PI_URL" "$VST3PI_SHA256" "vst3_pluginterfaces-${VST3PI_VERSION}.tar.gz")"
+    rm -rf "$pi" "$b" && mkdir -p "$pi/pluginterfaces" "$b"
+    tar -xzf "$t" -C "$pi/pluginterfaces" --strip-components=1
+    local src="$REPO/host/src"
+    local flags=(-std=c++20 -O2 -g0 -municode -DUNICODE -D_UNICODE -Wall -I"$pi" -I"$src")
+    for f in "$src"/*.cpp "$pi/pluginterfaces/base/funknown.cpp"; do
+        x86_64-w64-mingw32-g++ "${flags[@]}" -c "$f" -o "$b/$(basename "${f%.cpp}").o"
+    done
+    mkdir -p "$STAGE/host" "$STAGE/tests"
+    x86_64-w64-mingw32-g++ -municode -static -s -o "$STAGE/host/vstghost-host.exe" "$b"/*.o -lole32 -luuid
+    file "$STAGE/host/vstghost-host.exe"
+    python3 "$REPO/tools/make_test_midi.py" "$STAGE/tests/phase1.mid"
 }
 
 step_etc() {
@@ -234,7 +257,7 @@ PY
 }
 
 STEPS=("$@")
-[ ${#STEPS[@]} -eq 0 ] && STEPS=(glibc box64 wine prefix hello etc pack play)
+[ ${#STEPS[@]} -eq 0 ] && STEPS=(glibc box64 wine prefix hello host etc pack play)
 mkdir -p "$WORK" "$STAGE"
 for s in "${STEPS[@]}"; do "step_$s"; done
 log "done: $OUT"

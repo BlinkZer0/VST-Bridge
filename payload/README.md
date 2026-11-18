@@ -9,6 +9,9 @@ Builds everything VST gHost runs under emulation. Binaries are never committed; 
 | Wine 11.0 | built from source: x86_64 only, headless (no X11/GL/Vulkan/audio/fonts) | patch: server dir inside `WINEPREFIX` (Android has no `/tmp`) |
 | WINEPREFIX | created once at build time with `wineboot -i` | `.update-timestamp = disable`, only `c:` and `z:` |
 | `tests/hello.exe` | [tests/hello.c](tests/hello.c), MinGW x86_64 | prints Wine/host/CPU info, runs [shared/bench](../shared/bench/bench_kernel.h) |
+| `host/vstghost-host.exe` | [host/src](../host/src), MinGW x86_64, VST3 `pluginterfaces` 3.8.1 (MIT, pinned) | the bridge host (`scan` / `info` / `render`) |
+| `tests/phase1.mid` | [tools/make_test_midi.py](../tools/make_test_midi.py) | Phase 1 test MIDI |
+| Prefix setting | `HKCU\Software\Wine\Drivers\Graphics=null` | headless window creation (needed by JUCE) |
 
 ## Build
 

@@ -16,3 +16,4 @@ payload/cache/
 payload/work/
 *.tar.zst
 *.tzst
+results-audio/

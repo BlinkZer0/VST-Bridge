@@ -4,49 +4,48 @@ _Last updated: 2026-11-18_
 
 ## Current phase
 
-**Phase 0: done and demoed on the device** (see [docs/phase0-report.md](docs/phase0-report.md)). Next: Phase 1 (offline render with real VST3 plugins).
+**Phase 1: done and demoed on the device** ([docs/phase1-report.md](docs/phase1-report.md)). Phase 0 is done ([docs/phase0-report.md](docs/phase0-report.md)). Next: Phase 2 (real-time standalone app).
 
-## What works (run on the Galaxy S26 Ultra, SM-S948U1, Android 17)
+## What works (run on the Galaxy S26 Ultra SM-S948U1, Android 17, both editions unless noted)
 
-| Feature | Play edition (targetSdk 36) | Sideload edition (targetSdk 28) |
-|---|---|---|
-| Payload extraction from APK asset / Android/data | ✅ 1.95 s | ✅ 1.94 s |
-| Box64 0.4.4 launches | ✅ (via the fixed-path PT_INTERP symlink) | ✅ (PT_INTERP rewritten at extraction) |
-| Wine 11.0 runs an x86_64 Windows exe; output captured in the app | ✅ | ✅ |
-| Box64 self re-exec for Wine children (wineserver, services…) | ✅ | ✅ |
-| SELinux denials / phantom-process kills | 0 / 0 | 0 / 0 |
-
-Verified only on the dev PC (x86_64 WSL, not the phone): the payload's Wine + prefix run hello.exe natively (reference checksum).
+| Feature | Evidence |
+|---|---|
+| Payload install (Wine 11.0 + Box64 0.4.4 + glibc) from APK asset (Play) or Android/data (sideload) | 1.9 s, Phase 0 report |
+| Wine runs x86_64 Windows programs; Play edition at targetSdk 36 with 0 SELinux denials | Phase 0 report |
+| Bridge host `vstghost-host.exe`: `scan` / `info` / `render` (MIDI → 32-bit float WAV, effects get a test signal) | Phase 1 report |
+| **4/4 test plugins load and render**: E-Piano, Brass Knuckles, Pedal Faster (effect), Odin2 | Phase 1 report |
+| **Rendered audio bit-identical to native x86_64** (all 4 plugins × both editions) | `tools/compare_wav.py`, max diff 0 |
+| MIDI CC / pitch bend / sustain routed via `IMidiMapping` (412/412 mapped) | Phase 1 report |
 
 ## Measured numbers (device, 2026-11-18)
 
-| Metric | Play | Sideload |
-|---|---|---|
-| Payload: compressed / on disk | 63.2 / 407.5 MB | same |
-| APK size | 75.6 MB (payload bundled) | 2.8 MB |
-| Cold Wine session → hello.exe first output | 1074 ms | 1087 ms |
-| In running session → first output | 93–104 ms | 104–139 ms |
-| Guest processes per session | 7–8 | 7–8 |
-| Peak summed RSS (overcounts shared pages) | 440 MB cold / 380 MB in-session | 445 / 382 MB |
-| DSP kernel native vs Box64 | 82.0 vs 97.1 ms (1.18×) | 82.4 vs 96.7 ms (1.17×) |
-| Float results native vs Box64 | identical | identical |
+| Metric | Value |
+|---|---|
+| Payload: compressed / on disk | 64 / 414 MB |
+| Cold Wine session → first output | ~1.08 s; in-session process start ~0.1 s |
+| Plugin load in a running session | 122–178 ms (Odin2 894 ms) |
+| Offline render speed, one core, 256-frame blocks | 27× (Odin2) to 82× (E-Piano) real time |
+| Block time p99 / worst (budget 5.33 ms @ 256/48k) | 0.11–0.44 ms / 2.2–8.9 ms (early-render spikes) |
+| Host process RSS per plugin | 149–228 MB |
+| Estimated Box64 cost on real plugin DSP (phone vs PC) | ~2.3–3.3× (CPUs differ; estimate) |
+| User-facing params (plus 2,080 JUCE MIDI-CC params each) | 98 / 349 / 146 / 259 |
 
 ## Doesn't work / not attempted yet
 
-- No VST loading yet (Phase 1). No audio I/O, MIDI or IPC yet (Phase 2).
-- Play edition loader path is primary-user only (`/data/data/com.vstghost/...`).
-- Memory is RSS, not PSS.
+- No real-time audio, live MIDI, IPC or latency numbers yet (Phase 2).
+- No plugin GUIs (Phase 4). The three newer plugins' editors are WebView-based (likely need WebView2 under Wine).
+- Play edition loader path is primary-user only. Memory is RSS, not PSS.
 
 ## Open questions / risks
 
-1. Wine session services cost ~1.1 s and ~300–400 MB. Plan: one long-lived session plus trimmed services (Phase 1/2).
-2. Box64 overhead on real SIMD-heavy plugin code is unknown (the Phase 0 kernel is scalar).
-3. **Deviation:** glibc is Termux's prebuilt package, not rebuilt from source. Rebuilding is a TODO before a public release.
-4. The phone runs Android 17, not 16 as the brief says. Everything above was measured on 17.
+1. **Phase 2 IPC transport** between the MinGW PE host and the arm64 engine (see ARCHITECTURE.md §1); to be decided by measured wakeup latency.
+2. **First-run block spikes** (up to 8.9 ms): likely Box64 translating code the first time it runs. Plan: pre-roll after load, plus ring prefill.
+3. Wine session cost (~1.1 s start, ~300–400 MB) plus ~150–230 MB per plugin: consider trimming services and grouping hosts.
+4. **Deviation:** glibc is Termux's prebuilt package; rebuild from source before a public release.
+5. The brief says Android 16; the phone runs Android 17. All results are from 17.
 
 ## Assumptions still to prove
 
-- Wine runs headless (null display driver) for real plugin loading (Phase 1).
 - Render thread can lower its nice value and pin to performance cores (Phase 2).
 - `STRONGMEM=1` + `seq_cst` indices make the shared ring safe under Box64 (Phase 2 stress test).
 - aap-juce-simple-host accepts parameters reported at runtime (Phase 3).

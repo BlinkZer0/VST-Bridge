@@ -16,8 +16,9 @@ import android.widget.TextView
 import java.util.concurrent.Executors
 
 /**
- * Phase 0 harness UI. Can also be driven from adb:
+ * Test harness UI. Can also be driven from adb:
  *   adb shell am start -n <pkg>/com.vstghost.MainActivity --ez autorun true [--ez reinstall true]
+ *   adb shell am start -n <pkg>/com.vstghost.MainActivity --ez autorun true --ei phase 1 [--ei block 256]
  */
 class MainActivity : Activity() {
 
@@ -46,8 +47,8 @@ class MainActivity : Activity() {
             text = label; isAllCaps = false; setOnClickListener { action() }
             buttons.addView(this, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         }
-        button("Run tests") { start(reinstall = false) }
-        button("Reinstall + run") { start(reinstall = true) }
+        button("Phase 0") { start(reinstall = false) }
+        button("Phase 1") { startPhase1() }
         button("Share report") { share() }
         col.addView(buttons)
 
@@ -68,7 +69,25 @@ class MainActivity : Activity() {
     private fun handleIntent(i: Intent?) {
         if (i?.getBooleanExtra("autorun", false) == true) {
             i.removeExtra("autorun")
-            start(reinstall = i.getBooleanExtra("reinstall", false))
+            if (i.getIntExtra("phase", 0) == 1) startPhase1(i.getIntExtra("block", 256), i.getBooleanExtra("reinstall", false))
+            else start(reinstall = i.getBooleanExtra("reinstall", false))
+        }
+    }
+
+    private fun startPhase1(block: Int = 256, reinstall: Boolean = false) {
+        if (busy) { log("already running"); return }
+        busy = true
+        logView.text = ""
+        worker.execute {
+            try {
+                Phase1(this, ::log).runAll(block, reinstall)
+                log("PHASE1 DONE")
+            } catch (t: Throwable) {
+                log("PHASE1 CRASHED: ${Log.getStackTraceString(t)}")
+            } finally {
+                busy = false
+                runOnUiThread { refreshStatus() }
+            }
         }
     }
 
@@ -103,7 +122,8 @@ class MainActivity : Activity() {
     }
 
     private fun share() {
-        val f = Phase0(this) {}.reportFiles().firstOrNull { it.isFile } ?: run { log("no report yet"); return }
+        val f = (listOf(Phase1(this) {}.reportFile()) + Phase0(this) {}.reportFiles())
+            .filter { it.isFile }.maxByOrNull { it.lastModified() } ?: run { log("no report yet"); return }
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, "VST gHost Phase 0 report")
