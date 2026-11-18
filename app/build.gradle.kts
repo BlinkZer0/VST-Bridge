@@ -95,6 +95,8 @@ dependencies {
     implementation("com.google.oboe:oboe:1.11.0")
     // Audio Plugins For Android (MIT): our bridge slots are AAP plugins (Phase 3).
     implementation("org.androidaudioplugin:androidaudioplugin:0.12.0")
+    // Phase 5: document-start scripts for native plugins' web UIs (JUCE's Android bridge setup).
+    implementation("androidx.webkit:webkit:1.12.1")
 }
 
 kotlin {

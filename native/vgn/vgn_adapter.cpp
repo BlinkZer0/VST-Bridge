@@ -200,6 +200,7 @@ int vgn_editor_open(vgn_plugin* p, JNIEnv*, jobject viewGroup, int32_t availW, i
     const int lw = std::max(ed->getWidth(), 1), lh = std::max(ed->getHeight(), 1);
     const double fit = std::min(availW / (lw * density), availH / (lh * density));
     juce::Desktop::getInstance().setGlobalScaleFactor((float)std::max(0.1, fit));
+    if (ed->isOnDesktop()) ed->removeFromDesktop();  // moving to a new screen: re-parent the view
     ed->setVisible(true);
     ed->addToDesktop(0, viewGroup);
     ed->setTopLeftPosition(0, 0);
@@ -212,7 +213,10 @@ int vgn_editor_open(vgn_plugin* p, JNIEnv*, jobject viewGroup, int32_t availW, i
 void vgn_editor_close(vgn_plugin* p) {
     if (!p || !p->editor) return;
     p->editor->removeFromDesktop();
-    p->editor.reset();  // ~AudioProcessorEditor tells the processor (editorBeingDeleted)
+    // The host must tell the processor first (~AudioProcessorEditor only asserts it happened);
+    // otherwise JUCE keeps a stale "active editor" and refuses to create the next one.
+    p->proc->editorBeingDeleted(p->editor.get());
+    p->editor.reset();
 }
 
 }  // extern "C"

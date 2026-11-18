@@ -32,9 +32,10 @@ set(FETCHCONTENT_SOURCE_DIR_JUCE "${CMAKE_CURRENT_LIST_DIR}/juce-shim" CACHE PAT
 set(JUCE_DIR "${CMAKE_CURRENT_LIST_DIR}/juce-shim" CACHE PATH "" FORCE)
 include(${CMAKE_CURRENT_LIST_DIR}/juce-shim/VgJuce.cmake)
 
-# vg_add_juce_project(<name> URL <url> SHA256 <sha> [LOCAL <folder name>] [SUBDIR <dir with CMakeLists.txt>])
+# vg_add_juce_project(<name> (URL <url> SHA256 <sha> | GIT <repo> COMMIT <sha> [SUBMODULES <paths...>])
+#                     [LOCAL <folder name>] [SUBDIR <dir with CMakeLists.txt>])
 function(vg_add_juce_project name)
-    cmake_parse_arguments(A "" "URL;SHA256;LOCAL;SUBDIR" "" ${ARGN})
+    cmake_parse_arguments(A "" "URL;SHA256;GIT;COMMIT;LOCAL;SUBDIR" "SUBMODULES" ${ARGN})
     if(VG_NATIVE_PLUGINS AND NOT name IN_LIST VG_NATIVE_PLUGINS)
         return()
     endif()
@@ -42,8 +43,14 @@ function(vg_add_juce_project name)
     if(VG_PLUGIN_SRC_ROOT AND A_LOCAL AND EXISTS "${VG_PLUGIN_SRC_ROOT}/${A_LOCAL}")
         set(FETCHCONTENT_SOURCE_DIR_${up} "${VG_PLUGIN_SRC_ROOT}/${A_LOCAL}")
     endif()
-    FetchContent_Declare(vg_src_${name} URL ${A_URL} URL_HASH SHA256=${A_SHA256}
-        SOURCE_SUBDIR do-not-configure DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    if(A_GIT)
+        # A pinned commit; only the submodules the plugin itself needs (never its own JUCE copy).
+        FetchContent_Declare(vg_src_${name} GIT_REPOSITORY ${A_GIT} GIT_TAG ${A_COMMIT}
+            GIT_SUBMODULES ${A_SUBMODULES} GIT_PROGRESS FALSE SOURCE_SUBDIR do-not-configure)
+    else()
+        FetchContent_Declare(vg_src_${name} URL ${A_URL} URL_HASH SHA256=${A_SHA256}
+            SOURCE_SUBDIR do-not-configure DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    endif()
     FetchContent_MakeAvailable(vg_src_${name})
     set(dir "${vg_src_${name}_SOURCE_DIR}")
     if(A_SUBDIR)
@@ -63,3 +70,9 @@ vg_add_juce_project(brass LOCAL Brass-Knuckles SUBDIR vst
 vg_add_juce_project(pedalfaster LOCAL Pedal=Faster
     URL https://github.com/BlinkZer0/Pedal-Faster/archive/037df15ef53009a40b9f4fb272d10a08d9076530.tar.gz
     SHA256 2919368f70fa97c3cdce4f7928cbc0875107cea57a16573f00414d8f7060b97c)
+
+# ---- Third-party open-source JUCE plugins (unmodified upstream source) ----
+# Odin2 (GPL-3.0): https://github.com/TheWaveWarden/odin2
+vg_add_juce_project(odin2 LOCAL odin2
+    GIT https://github.com/TheWaveWarden/odin2.git COMMIT 265e9e227581357efb87ed7217381f8a40c5e2bf
+    SUBMODULES libs/tuning-library libs/json)

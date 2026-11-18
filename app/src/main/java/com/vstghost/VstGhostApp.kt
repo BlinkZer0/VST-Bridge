@@ -14,5 +14,7 @@ class VstGhostApp : Application() {
         super.onCreate()
         System.loadLibrary("vstghost")
         SlotManager.init(this)
+        // Debug builds: native plugin web UIs (Phase 5) can be inspected with chrome://inspect.
+        if (BuildConfig.DEBUG) android.webkit.WebView.setWebContentsDebuggingEnabled(true)
     }
 }

@@ -25,6 +25,12 @@ import kotlin.math.min
  *   adb shell am start -n com.vstghost/com.vstghost.NativeEditorActivity --ei slot 0
  */
 class NativeEditorActivity : Activity() {
+    companion object {
+        /** The screen currently showing each slot's editor. Android may destroy a closed screen only
+         *  after a newly opened one has taken the editor over; that late onDestroy must not close it. */
+        private val owners = HashMap<Int, NativeEditorActivity>()
+    }
+
     private var slot = 0
     private var opened = false
     private lateinit var zoom: ZoomLayout
@@ -71,13 +77,18 @@ class NativeEditorActivity : Activity() {
             Log.i("VSTGHOST", "native editor slot $slot: ${size?.joinToString("x")} in $ms ms (area ${zoom.width}x${zoom.height})")
             if (size == null) { title.text = "This plugin has no editor"; return@post }
             opened = true
+            owners[slot] = this
             zoom.setContentSize(size[0], size[1])
+            JuceWebViews.watch(zoom.content)
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        if (opened && isFinishing) NativeEngine.nativeEditorClose(slot)
+        if (opened && owners[slot] === this) {
+            owners.remove(slot)
+            NativeEngine.nativeEditorClose(slot)
+        }
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -165,5 +176,52 @@ class ZoomLayout(context: Context) : FrameLayout(context) {
         lastFx = fx; lastFy = fy; lastSpan = span
         apply()
         return true
+    }
+}
+
+/**
+ * JUCE web UIs on Android: JUCE's bridge (window.__JUCE__.backend, initialisationData, ...) only
+ * exists after the page evaluates window.__JUCE__.getAndroidUserScripts(). JUCE's own JS library does
+ * that, but UIs with their own bridge code (written for WebView2/WKWebView, where the script is
+ * injected for them) never do, so no events flow. For every WebView a native editor creates we run
+ * that step at document start (androidx.webkit) and reload once, which works for any JUCE plugin.
+ */
+object JuceWebViews {
+    private const val SCRIPT = """
+        if (typeof window.__JUCE__ !== 'undefined' && typeof window.__JUCE__.getAndroidUserScripts !== 'undefined'
+            && typeof window.__JUCE__.backend === 'undefined' && typeof window.inAndroidUserScriptEval === 'undefined') {
+          window.inAndroidUserScriptEval = true;
+          try { (0, eval)(window.__JUCE__.getAndroidUserScripts()); } finally { delete window.inAndroidUserScriptEval; }
+        }"""
+    private val tagKey = R.id.vg_juce_patched
+
+    /** Patches WebViews under [root] now and while the editor builds its UI (JUCE creates them lazily). */
+    fun watch(root: android.view.ViewGroup) {
+        var tries = 0
+        val r = object : Runnable {
+            override fun run() {
+                patchAll(root)
+                if (++tries < 20) root.postDelayed(this, 250)
+            }
+        }
+        root.post(r)
+    }
+
+    private fun patchAll(v: android.view.View) {
+        if (v is android.webkit.WebView) patch(v)
+        if (v is android.view.ViewGroup) for (i in 0 until v.childCount) patchAll(v.getChildAt(i))
+    }
+
+    private fun patch(wv: android.webkit.WebView) {
+        if (wv.getTag(tagKey) == true) return
+        wv.setTag(tagKey, true)
+        if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            androidx.webkit.WebViewCompat.addDocumentStartJavaScript(wv, SCRIPT, setOf("*"))
+            wv.reload()  // the first load already ran without it
+            Log.i("VSTGHOST", "JUCE web UI: bridge setup injected at document start, reloading")
+        } else {
+            wv.evaluateJavascript(SCRIPT, null)  // best effort: the page's own init has already run
+            Log.w("VSTGHOST", "JUCE web UI: no document-start scripts in this WebView; injected late")
+        }
     }
 }
