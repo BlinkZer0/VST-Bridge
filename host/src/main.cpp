@@ -6,6 +6,7 @@
 //   vstghost-host info   <plugin>                    load, print classes/buses/parameters
 //   vstghost-host render <plugin> --out <wav> [--midi <mid>] [--input <wav>|builtin]
 //                        [--rate 48000] [--block 256] [--tail 3] [--realtime]
+//   vstghost-host serve  <plugin> --shm <file> [--quiet]   live mode (shared/ipc/vg_ipc.h)
 //
 // Results are a single JSON object on stdout; diagnostics go to stderr.
 // Exit codes: 0 ok, 1 usage, 2 load failed, 3 render failed, 70 crashed.
@@ -19,6 +20,7 @@
 #include <vector>
 
 #include "midifile.h"
+#include "serve.h"
 #include "util.h"
 #include "vst3host.h"
 #include "wav.h"
@@ -253,6 +255,17 @@ int wmain(int argc, wchar_t** argv) {
     if (cmd == L"scan") rc = cmdScan(target);
     else if (cmd == L"info") rc = cmdInfo(target);
     else if (cmd == L"render") rc = cmdRender(target, argc - 3, argv + 3);
+    else if (cmd == L"serve") {
+        std::wstring shm;
+        bool quiet = false, pattern = false;
+        for (int i = 3; i < argc; ++i) {
+            if (std::wstring(argv[i]) == L"--shm" && i + 1 < argc) shm = toWinPath(argv[++i]);
+            else if (std::wstring(argv[i]) == L"--quiet") quiet = true;
+            else if (std::wstring(argv[i]) == L"--pattern") pattern = true;
+        }
+        g_stage = "serve";
+        rc = shm.empty() ? usage() : cmdServe(target, shm, quiet, pattern);
+    }
     else rc = usage();
     fflush(stdout);
     // Plugins sometimes leave threads behind; don't hang on exit.

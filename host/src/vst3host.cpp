@@ -144,7 +144,7 @@ public:
     tresult PLUGIN_API performEdit(ParamID, ParamValue) override { return kResultOk; }
     tresult PLUGIN_API endEdit(ParamID) override { return kResultOk; }
     tresult PLUGIN_API restartComponent(int32 flags) override { restartFlags |= flags; return kResultOk; }
-    int32 restartFlags = 0;
+    std::atomic<int32> restartFlags{0};
     virtual ~ComponentHandler() = default;
 };
 
@@ -175,7 +175,7 @@ public:
         return kResultOk;
     }
     tresult PLUGIN_API tell(int64* p) override { if (p) *p = pos; return kResultOk; }
-    std::vector<char> data;
+    std::string data;
     int64 pos = 0;
     virtual ~MemoryStream() = default;
 };
@@ -281,7 +281,15 @@ std::string lastErrorText(DWORD e) {
     return s + b;
 }
 
+BusDesc busDesc(const BusInfo& bi) {
+    return {utf8(bi.name), bi.channelCount, bi.busType == kMain, (bi.flags & BusInfo::kDefaultActive) != 0};
+}
+
 }  // namespace
+
+bool isUserParam(const ParamDesc& p) {
+    return p.title.rfind("MIDI CC", 0) != 0 && !(p.flags & ParameterInfo::kIsHidden);
+}
 
 // ---------------------------------------------------------------- Plugin
 
@@ -298,7 +306,36 @@ struct Plugin::Impl {
     ComponentHandler* handler = new ComponentHandler;
     bool componentInitialized = false, controllerInitialized = false;
 
+    // Streaming state
+    bool active = false;
+    double sampleRate = 48000;
+    int32 maxBlock = 0;
+    std::vector<std::vector<float>> inStore, outStore;
+    std::vector<std::vector<float*>> inPtrs, outPtrs;
+    std::vector<AudioBusBuffers> inBufs, outBufs;
+    EventList* events = nullptr;
+    ParamChanges* changes = nullptr;
+    ProcessContext ctx{};
+    ProcessData pd{};
+
+    void makeBufs(const std::vector<BusDesc>& bd, std::vector<std::vector<float>>& store,
+                  std::vector<std::vector<float*>>& ptrs, std::vector<AudioBusBuffers>& abb) {
+        store.clear(); ptrs.assign(bd.size(), {}); abb.assign(bd.size(), AudioBusBuffers{});
+        for (size_t b = 0; b < bd.size(); ++b)
+            for (int32 c = 0; c < bd[b].channels; ++c) store.emplace_back((size_t)maxBlock, 0.0f);
+        size_t k = 0;
+        for (size_t b = 0; b < bd.size(); ++b) {
+            for (int32 c = 0; c < bd[b].channels; ++c) ptrs[b].push_back(store[k++].data());
+            abb[b].numChannels = bd[b].channels;
+            abb[b].silenceFlags = 0;
+            abb[b].channelBuffers32 = ptrs[b].empty() ? nullptr : ptrs[b].data();
+        }
+    }
+
     ~Impl() {
+        if (active) { processor->setProcessing(false); component->setActive(false); }
+        if (events) events->release();
+        if (changes) changes->release();
         if (compCP && ctrlCP) { compCP->disconnect(ctrlCP); ctrlCP->disconnect(compCP); }
         releaseAndNull(compCP);
         releaseAndNull(ctrlCP);
@@ -444,8 +481,7 @@ std::unique_ptr<Plugin> Plugin::load(const std::wstring& path, std::string& err,
     auto buses = [&](MediaType type, BusDirection dir, std::vector<BusDesc>& out) {
         for (int32 i = 0; i < I.component->getBusCount(type, dir); ++i) {
             BusInfo bi{};
-            if (I.component->getBusInfo(type, dir, i, bi) != kResultOk) continue;
-            out.push_back({utf8(bi.name), bi.channelCount, bi.busType == kMain, (bi.flags & BusInfo::kDefaultActive) != 0});
+            if (I.component->getBusInfo(type, dir, i, bi) == kResultOk) out.push_back(busDesc(bi));
         }
     };
     buses(kAudio, kInput, p->audioIn);
@@ -455,84 +491,150 @@ std::unique_ptr<Plugin> Plugin::load(const std::wstring& path, std::string& err,
     return p;
 }
 
-bool Plugin::render(const RenderSettings& s, RenderStats& st, std::string& err) {
+int Plugin::inChannels() const { return audioIn.empty() ? 0 : audioIn[0].channels; }
+int Plugin::outChannels() const { return audioOut.empty() ? 0 : audioOut[0].channels; }
+
+bool Plugin::begin(double sampleRate, int32_t maxBlock, bool realtime, std::string& err) {
     Impl& I = *impl;
-    const int32 B = s.blockSize;
+    if (I.active) end();
+    I.sampleRate = sampleRate;
+    I.maxBlock = maxBlock;
 
     // Stereo main buses where possible; keep whatever the plugin insists on otherwise.
-    {
-        std::vector<SpeakerArrangement> ins(audioIn.size(), SpeakerArr::kStereo), outs(audioOut.size(), SpeakerArr::kStereo);
-        I.processor->setBusArrangements(ins.empty() ? nullptr : ins.data(), (int32)ins.size(),
-                                        outs.empty() ? nullptr : outs.data(), (int32)outs.size());
-        audioIn.clear(); audioOut.clear();
-        for (int32 i = 0; i < I.component->getBusCount(kAudio, kInput); ++i) {
-            BusInfo bi{}; I.component->getBusInfo(kAudio, kInput, i, bi);
-            audioIn.push_back({utf8(bi.name), bi.channelCount, bi.busType == kMain, (bi.flags & BusInfo::kDefaultActive) != 0});
-        }
-        for (int32 i = 0; i < I.component->getBusCount(kAudio, kOutput); ++i) {
-            BusInfo bi{}; I.component->getBusInfo(kAudio, kOutput, i, bi);
-            audioOut.push_back({utf8(bi.name), bi.channelCount, bi.busType == kMain, (bi.flags & BusInfo::kDefaultActive) != 0});
-        }
+    std::vector<SpeakerArrangement> ins(audioIn.size(), SpeakerArr::kStereo), outs(audioOut.size(), SpeakerArr::kStereo);
+    I.processor->setBusArrangements(ins.empty() ? nullptr : ins.data(), (int32)ins.size(),
+                                    outs.empty() ? nullptr : outs.data(), (int32)outs.size());
+    audioIn.clear(); audioOut.clear();
+    for (int32 i = 0; i < I.component->getBusCount(kAudio, kInput); ++i) {
+        BusInfo bi{}; I.component->getBusInfo(kAudio, kInput, i, bi); audioIn.push_back(busDesc(bi));
+    }
+    for (int32 i = 0; i < I.component->getBusCount(kAudio, kOutput); ++i) {
+        BusInfo bi{}; I.component->getBusInfo(kAudio, kOutput, i, bi); audioOut.push_back(busDesc(bi));
     }
     if (audioOut.empty()) { err = "plugin has no audio output bus"; return false; }
     if (!audioIn.empty()) I.component->activateBus(kAudio, kInput, 0, true);
     I.component->activateBus(kAudio, kOutput, 0, true);
     if (!eventIn.empty()) I.component->activateBus(kEvent, kInput, 0, true);
 
-    ProcessSetup setup{s.realtimeMode ? kRealtime : kOffline, kSample32, B, s.sampleRate};
+    ProcessSetup setup{realtime ? kRealtime : kOffline, kSample32, maxBlock, sampleRate};
     if (I.processor->setupProcessing(setup) != kResultOk) { err = "setupProcessing failed"; return false; }
     if (I.component->setActive(true) != kResultOk) { err = "setActive(true) failed"; return false; }
     I.processor->setProcessing(true);  // some plugins return kNotImplemented; that's allowed
+    I.active = true;
 
-    // Length: last MIDI event / input length, plus tail.
+    I.makeBufs(audioIn, I.inStore, I.inPtrs, I.inBufs);
+    I.makeBufs(audioOut, I.outStore, I.outPtrs, I.outBufs);
+    if (!I.events) I.events = new EventList;
+    if (!I.changes) I.changes = new ParamChanges;
+    I.events->events.reserve(512);
+
+    I.ctx = ProcessContext{};
+    I.ctx.sampleRate = sampleRate;
+    I.ctx.tempo = 120.0;
+    I.ctx.timeSigNumerator = 4;
+    I.ctx.timeSigDenominator = 4;
+    I.ctx.state = ProcessContext::kPlaying | ProcessContext::kTempoValid | ProcessContext::kTimeSigValid |
+                  ProcessContext::kProjectTimeMusicValid | ProcessContext::kContTimeValid;
+    I.pd = ProcessData{};
+    I.pd.processMode = setup.processMode;
+    I.pd.symbolicSampleSize = kSample32;
+    I.pd.numInputs = (int32)I.inBufs.size();
+    I.pd.numOutputs = (int32)I.outBufs.size();
+    I.pd.inputs = I.inBufs.empty() ? nullptr : I.inBufs.data();
+    I.pd.outputs = I.outBufs.data();
+    I.pd.inputEvents = I.events;
+    I.pd.inputParameterChanges = I.changes;
+    I.pd.processContext = &I.ctx;
+    return true;
+}
+
+bool Plugin::process(int32_t n, const BlockMidi* midi, size_t nMidi, const BlockParam* prm, size_t nPrm,
+                     const float* const* in, float* const* out, int64_t projectFrame, BlockCounters& c) {
+    Impl& I = *impl;
+    if (!I.active || n <= 0 || n > I.maxBlock) return false;
+    I.events->events.clear();
+    I.changes->clear();
+    for (size_t k = 0; k < nPrm; ++k) {
+        int32 qi, pi;
+        I.changes->addParameterData(prm[k].id, qi)->addPoint(std::clamp(prm[k].offset, 0, n - 1), prm[k].value, pi);
+    }
+    for (size_t k = 0; k < nMidi; ++k) {
+        const BlockMidi& m = midi[k];
+        const int32 off = std::clamp(m.offset, 0, n - 1);
+        const uint8_t type = m.status & 0xF0;
+        const int16 chan = m.status & 0x0F;
+        Event e{};
+        e.busIndex = 0; e.sampleOffset = off; e.flags = Event::kIsLive;
+        if (type == 0x90 && m.d2 > 0) {
+            e.type = Event::kNoteOnEvent;
+            e.noteOn = {chan, (int16)m.d1, 0.0f, m.d2 / 127.0f, 0, -1};
+            I.events->addEvent(e); ++c.notes;
+        } else if (type == 0x80 || (type == 0x90 && m.d2 == 0)) {
+            e.type = Event::kNoteOffEvent;
+            e.noteOff = {chan, (int16)m.d1, m.d2 / 127.0f, -1, 0.0f};
+            I.events->addEvent(e);
+        } else if (type == 0xB0 || type == 0xE0 || type == 0xD0) {
+            CtrlNumber cc = type == 0xB0 ? (CtrlNumber)m.d1 : type == 0xE0 ? (CtrlNumber)kPitchBend : (CtrlNumber)kAfterTouch;
+            double v = type == 0xB0 ? m.d2 / 127.0 : type == 0xE0 ? ((m.d2 << 7) | m.d1) / 16383.0 : m.d1 / 127.0;
+            ParamID pid;
+            if (I.midiMapping && I.midiMapping->getMidiControllerAssignment(0, chan, cc, pid) == kResultOk) {
+                int32 qi, pi;
+                I.changes->addParameterData(pid, qi)->addPoint(off, v, pi);
+                ++c.ccMapped;
+            } else {
+                ++c.ccUnmapped;
+            }
+        }
+    }
+    // Main input bus from the caller; other inputs silent.
+    for (size_t b = 0; b < I.inPtrs.size(); ++b)
+        for (size_t ch = 0; ch < I.inPtrs[b].size(); ++ch) {
+            float* dst = I.inPtrs[b][ch];
+            const float* src = (b == 0 && in) ? in[ch] : nullptr;
+            if (src) memcpy(dst, src, sizeof(float) * (size_t)n);
+            else memset(dst, 0, sizeof(float) * (size_t)n);
+        }
+    for (auto& o : I.outStore) memset(o.data(), 0, sizeof(float) * (size_t)n);
+    for (auto& b : I.outBufs) b.silenceFlags = 0;
+
+    I.ctx.projectTimeSamples = projectFrame;
+    I.ctx.continousTimeSamples = projectFrame;
+    I.ctx.projectTimeMusic = (double)projectFrame / I.sampleRate * (I.ctx.tempo / 60.0);
+    I.pd.numSamples = n;
+    I.processor->process(I.pd);
+
+    const int outCh = outChannels();
+    for (int ch = 0; ch < outCh; ++ch) memcpy(out[ch], I.outPtrs[0][(size_t)ch], sizeof(float) * (size_t)n);
+    return true;
+}
+
+void Plugin::end() {
+    Impl& I = *impl;
+    if (!I.active) return;
+    I.processor->setProcessing(false);
+    I.component->setActive(false);
+    I.active = false;
+}
+
+bool Plugin::render(const RenderSettings& s, RenderStats& st, std::string& err) {
+    const int32 B = s.blockSize;
+    if (!begin(s.sampleRate, B, s.realtimeMode, err)) return false;
+
     double contentSec = 0;
     for (const auto& e : s.midi) contentSec = std::max(contentSec, e.timeSec);
     if (!s.input.empty()) contentSec = std::max(contentSec, (double)s.input[0].size() / s.sampleRate);
     const int64_t total = (int64_t)std::ceil((contentSec + s.tailSec) * s.sampleRate);
 
-    // Buffers for every bus.
-    auto makeBufs = [&](const std::vector<BusDesc>& bd, std::vector<std::vector<float>>& store,
-                        std::vector<std::vector<float*>>& ptrs, std::vector<AudioBusBuffers>& abb) {
-        ptrs.resize(bd.size()); abb.resize(bd.size());
-        for (size_t b = 0; b < bd.size(); ++b) {
-            for (int32 c = 0; c < bd[b].channels; ++c) { store.emplace_back(B, 0.0f); ptrs[b].push_back(store.back().data()); }
-        }
-        for (size_t b = 0; b < bd.size(); ++b) {
-            abb[b].numChannels = bd[b].channels;
-            abb[b].silenceFlags = 0;
-            abb[b].channelBuffers32 = ptrs[b].empty() ? nullptr : ptrs[b].data();
-        }
-    };
-    std::vector<std::vector<float>> inStore, outStore;
-    inStore.reserve(64); outStore.reserve(64);
-    std::vector<std::vector<float*>> inPtrs, outPtrs;
-    std::vector<AudioBusBuffers> inBufs, outBufs;
-    makeBufs(audioIn, inStore, inPtrs, inBufs);
-    makeBufs(audioOut, outStore, outPtrs, outBufs);
-
-    const int outCh = audioOut[0].channels;
-    st.out.assign(outCh, std::vector<float>((size_t)total, 0.0f));
-
-    auto* events = new EventList;
-    auto* changes = new ParamChanges;
-    ProcessContext ctx{};
-    ctx.sampleRate = s.sampleRate;
-    ctx.tempo = 120.0;
-    ctx.timeSigNumerator = 4;
-    ctx.timeSigDenominator = 4;
-    ctx.state = ProcessContext::kPlaying | ProcessContext::kTempoValid | ProcessContext::kTimeSigValid |
-                ProcessContext::kProjectTimeMusicValid | ProcessContext::kContTimeValid;
-
-    ProcessData pd{};
-    pd.processMode = setup.processMode;
-    pd.symbolicSampleSize = kSample32;
-    pd.numInputs = (int32)inBufs.size();
-    pd.numOutputs = (int32)outBufs.size();
-    pd.inputs = inBufs.empty() ? nullptr : inBufs.data();
-    pd.outputs = outBufs.data();
-    pd.inputEvents = events;
-    pd.inputParameterChanges = changes;
-    pd.processContext = &ctx;
+    const int outCh = outChannels(), inCh = inChannels();
+    st.out.assign((size_t)outCh, std::vector<float>((size_t)total, 0.0f));
+    std::vector<std::vector<float>> inBlock((size_t)inCh, std::vector<float>((size_t)B, 0.0f));
+    std::vector<const float*> inP((size_t)inCh);
+    std::vector<std::vector<float>> outBlock((size_t)outCh, std::vector<float>((size_t)B, 0.0f));
+    std::vector<float*> outP((size_t)outCh);
+    for (int c = 0; c < inCh; ++c) inP[(size_t)c] = inBlock[(size_t)c].data();
+    for (int c = 0; c < outCh; ++c) outP[(size_t)c] = outBlock[(size_t)c].data();
+    std::vector<BlockMidi> bm;
+    BlockCounters cnt;
 
     size_t mi = 0;
     std::vector<double> blockMs;
@@ -540,74 +642,30 @@ bool Plugin::render(const RenderSettings& s, RenderStats& st, std::string& err) 
     double t0 = nowMs();
     for (int64_t pos = 0; pos < total; pos += B) {
         const int32 n = (int32)std::min<int64_t>(B, total - pos);
-        events->events.clear();
-        changes->clear();
-        // MIDI for this block.
+        bm.clear();
         while (mi < s.midi.size() && (int64_t)std::floor(s.midi[mi].timeSec * s.sampleRate) < pos + n) {
             const MidiEvent& m = s.midi[mi++];
-            const int32 off = (int32)std::clamp<int64_t>((int64_t)std::floor(m.timeSec * s.sampleRate) - pos, 0, n - 1);
-            const uint8_t type = m.status & 0xF0;
-            const int16 chan = m.status & 0x0F;
-            Event e{};
-            e.busIndex = 0; e.sampleOffset = off; e.flags = Event::kIsLive;
-            if (type == 0x90 && m.d2 > 0) {
-                e.type = Event::kNoteOnEvent;
-                e.noteOn = {chan, (int16)m.d1, 0.0f, m.d2 / 127.0f, 0, -1};
-                events->addEvent(e); ++st.notes;
-            } else if (type == 0x80 || (type == 0x90 && m.d2 == 0)) {
-                e.type = Event::kNoteOffEvent;
-                e.noteOff = {chan, (int16)m.d1, m.d2 / 127.0f, -1, 0.0f};
-                events->addEvent(e);
-            } else if (type == 0xB0 || type == 0xE0 || type == 0xD0) {
-                CtrlNumber cc = type == 0xB0 ? (CtrlNumber)m.d1 : type == 0xE0 ? (CtrlNumber)kPitchBend : (CtrlNumber)kAfterTouch;
-                double v = type == 0xB0 ? m.d2 / 127.0 : type == 0xE0 ? ((m.d2 << 7) | m.d1) / 16383.0 : m.d1 / 127.0;
-                ParamID pid;
-                if (I.midiMapping && I.midiMapping->getMidiControllerAssignment(0, chan, cc, pid) == kResultOk) {
-                    int32 qi, pi;
-                    changes->addParameterData(pid, qi)->addPoint(off, v, pi);
-                    ++st.ccMapped;
-                } else {
-                    ++st.ccUnmapped;
-                }
-            }
+            bm.push_back({(int32)((int64_t)std::floor(m.timeSec * s.sampleRate) - pos), m.status, m.d1, m.d2});
         }
-        // Effect input for this block.
-        for (size_t b = 0; b < inPtrs.size(); ++b)
-            for (size_t c = 0; c < inPtrs[b].size(); ++c) {
-                float* dst = inPtrs[b][c];
-                const std::vector<float>* src = (b == 0 && !s.input.empty()) ? &s.input[std::min(c, s.input.size() - 1)] : nullptr;
-                for (int32 i = 0; i < n; ++i) dst[i] = src && pos + i < (int64_t)src->size() ? (*src)[(size_t)(pos + i)] : 0.0f;
-            }
-        for (auto& o : outStore) std::fill(o.begin(), o.end(), 0.0f);
-
-        ctx.projectTimeSamples = pos;
-        ctx.continousTimeSamples = pos;
-        ctx.projectTimeMusic = (double)pos / s.sampleRate * (ctx.tempo / 60.0);
-        pd.numSamples = n;
-        for (auto& b : outBufs) b.silenceFlags = 0;
-
+        for (int c = 0; c < inCh; ++c) {
+            const std::vector<float>* src = s.input.empty() ? nullptr : &s.input[std::min((size_t)c, s.input.size() - 1)];
+            for (int32 i = 0; i < n; ++i) inBlock[(size_t)c][(size_t)i] = src && pos + i < (int64_t)src->size() ? (*src)[(size_t)(pos + i)] : 0.0f;
+        }
         double b0 = nowMs();
-        tresult r = I.processor->process(pd);
+        process(n, bm.data(), bm.size(), nullptr, 0, inCh ? inP.data() : nullptr, outP.data(), pos, cnt);
         blockMs.push_back(nowMs() - b0);
-        if (r != kResultOk && r != kNotImplemented) { /* keep going: record but don't abort */ }
-
-        for (int c = 0; c < outCh; ++c) {
-            const float* src = outPtrs[0][(size_t)c];
+        for (int c = 0; c < outCh; ++c)
             for (int32 i = 0; i < n; ++i) {
-                float v = src[i];
+                float v = outBlock[(size_t)c][(size_t)i];
                 if (!std::isfinite(v)) { ++st.nonFinite; v = 0; }
                 st.out[(size_t)c][(size_t)(pos + i)] = v;
             }
-        }
     }
     st.renderMs = nowMs() - t0;
     st.audioSec = (double)total / s.sampleRate;
     st.blockBudgetMs = B * 1000.0 / s.sampleRate;
-
-    I.processor->setProcessing(false);
-    I.component->setActive(false);
-    events->release();
-    changes->release();
+    st.notes = cnt.notes; st.ccMapped = cnt.ccMapped; st.ccUnmapped = cnt.ccUnmapped;
+    end();
 
     std::sort(blockMs.begin(), blockMs.end());
     if (!blockMs.empty()) {
@@ -623,6 +681,57 @@ bool Plugin::render(const RenderSettings& s, RenderStats& st, std::string& err) 
         st.rmsDb.push_back(rms > 0 ? 20 * std::log10(rms) : -999);
     }
     return true;
+}
+
+// ---------------------------------------------------------------- controller / state
+
+double Plugin::getParam(uint32_t id) {
+    return impl->controller ? impl->controller->getParamNormalized(id) : 0.0;
+}
+
+void Plugin::setParam(uint32_t id, double v) {
+    if (impl->controller) impl->controller->setParamNormalized(id, v);
+}
+
+std::string Plugin::paramText(uint32_t id, double v) {
+    String128 t{};
+    if (impl->controller && impl->controller->getParamStringByValue(id, v, t) == kResultOk) return utf8(t);
+    return {};
+}
+
+bool Plugin::getState(std::string& comp, std::string& ctrl) {
+    Impl& I = *impl;
+    auto* s1 = new MemoryStream;
+    bool ok = I.component->getState(s1) == kResultOk;
+    comp = s1->data;
+    s1->release();
+    ctrl.clear();
+    if (I.controller && separateController) {
+        auto* s2 = new MemoryStream;
+        if (I.controller->getState(s2) == kResultOk) ctrl = s2->data;
+        s2->release();
+    }
+    return ok;
+}
+
+bool Plugin::setState(const std::string& comp, const std::string& ctrl, std::string& err) {
+    Impl& I = *impl;
+    auto* s1 = new MemoryStream;
+    s1->data = comp;
+    bool ok = I.component->setState(s1) == kResultOk;
+    if (I.controller && separateController) {
+        s1->pos = 0;
+        I.controller->setComponentState(s1);
+        if (!ctrl.empty()) {
+            auto* s2 = new MemoryStream;
+            s2->data = ctrl;
+            I.controller->setState(s2);
+            s2->release();
+        }
+    }
+    s1->release();
+    if (!ok) err = "IComponent::setState failed";
+    return ok;
 }
 
 }  // namespace vg

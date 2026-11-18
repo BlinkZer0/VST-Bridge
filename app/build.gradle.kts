@@ -21,7 +21,7 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags += "-std=c++20"
-                arguments += "-DANDROID_STL=c++_static"
+                arguments += "-DANDROID_STL=c++_shared"  // required by Oboe's prefab package
             }
         }
     }
@@ -60,7 +60,10 @@ android {
         }
     }
 
-    buildFeatures { buildConfig = true }
+    buildFeatures {
+        buildConfig = true
+        prefab = true  // Oboe's native headers/libs
+    }
 
     packaging {
         // Extract .so files to nativeLibraryDir on install: the play edition execs
@@ -83,6 +86,11 @@ android {
         // The sideload flavor deliberately targets API 28.
         disable += listOf("ExpiredTargetSdkVersion", "OldTargetApi")
     }
+}
+
+dependencies {
+    // Low-latency audio (Apache-2.0), named in the project brief.
+    implementation("com.google.oboe:oboe:1.11.0")
 }
 
 kotlin {

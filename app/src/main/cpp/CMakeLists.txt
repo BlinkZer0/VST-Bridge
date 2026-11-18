@@ -21,13 +21,18 @@ target_include_directories(zstd_decompress PUBLIC ${zstd_SOURCE_DIR}/lib)
 # No asm Huffman decoder (it is x86_64-only anyway), no legacy formats.
 target_compile_definitions(zstd_decompress PRIVATE ZSTD_DISABLE_ASM=1 ZSTD_LEGACY_SUPPORT=0)
 
+find_package(oboe REQUIRED CONFIG)
+
+set(SHARED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../shared)
 add_library(vstghost SHARED
     jni.cpp
     extractor.cpp
-    bench.c)
+    engine.cpp
+    bench.c
+    ${SHARED_DIR}/ipc/bridge_client.cpp)
 
-target_include_directories(vstghost PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../../../shared)
-target_link_libraries(vstghost PRIVATE zstd_decompress android log)
+target_include_directories(vstghost PRIVATE ${SHARED_DIR} ${SHARED_DIR}/ipc)
+target_link_libraries(vstghost PRIVATE zstd_decompress oboe::oboe android log)
 target_compile_options(vstghost PRIVATE -Wall -Wextra)
 # Benchmark must not use FMA contraction, so its checksum matches the x86_64 build.
 set_source_files_properties(bench.c PROPERTIES COMPILE_OPTIONS "-O2;-ffp-contract=off")

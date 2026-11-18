@@ -69,8 +69,28 @@ class MainActivity : Activity() {
     private fun handleIntent(i: Intent?) {
         if (i?.getBooleanExtra("autorun", false) == true) {
             i.removeExtra("autorun")
-            if (i.getIntExtra("phase", 0) == 1) startPhase1(i.getIntExtra("block", 256), i.getBooleanExtra("reinstall", false))
-            else start(reinstall = i.getBooleanExtra("reinstall", false))
+            when (i.getIntExtra("phase", 0)) {
+                1 -> startPhase1(i.getIntExtra("block", 256), i.getBooleanExtra("reinstall", false))
+                2 -> startPhase2(i.getIntExtra("seconds", 15), i.getBooleanExtra("reinstall", false))
+                else -> start(reinstall = i.getBooleanExtra("reinstall", false))
+            }
+        }
+    }
+
+    private fun startPhase2(seconds: Int, reinstall: Boolean) {
+        if (busy) { log("already running"); return }
+        busy = true
+        logView.text = ""
+        worker.execute {
+            try {
+                Phase2(this, ::log).runAll(playSec = seconds, reinstall = reinstall)
+                log("PHASE2 DONE")
+            } catch (t: Throwable) {
+                log("PHASE2 CRASHED: ${Log.getStackTraceString(t)}")
+            } finally {
+                busy = false
+                runOnUiThread { refreshStatus() }
+            }
         }
     }
 

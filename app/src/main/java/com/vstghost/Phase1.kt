@@ -168,6 +168,9 @@ class Phase1(private val context: Context, private val log: (String) -> Unit) {
         return row
     }
 
+    /** Copies plugins pushed to Android/data/<pkg>/files/plugins into internal storage. */
+    fun syncPluginsPublic(): String = syncPlugins()
+
     private fun syncPlugins(): String {
         val src = pluginSrc ?: return "no external storage"
         if (!src.isDirectory) return "nothing new in $src"

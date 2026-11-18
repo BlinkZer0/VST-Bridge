@@ -30,7 +30,11 @@ Choices that apply across the design:
 - **Headless Wine through Phase 3.** No X server, no PulseAudio: audio never goes through Wine's audio stack. The prefix sets `HKCU\Software\Wine\Drivers\Graphics=null`, so Wine uses its **null graphics driver**: invisible windows and message loops work. Without that setting, Wine's no-driver path refuses every non-message window, including JUCE's hidden message window. **Proven in Phase 1:** 4/4 JUCE plugins load and process headless.
 - **64-bit Windows plugins only in v1.** No WoW64 and no Box86. 32-bit plugins are reported as unsupported.
 - **One host process per plugin instance** (yabridge's default), so a plugin crash takes down only its own slot. Grouping several plugins in one host can come later if memory use requires it.
-- **Bridge host: a plain x86_64 Windows exe built with MinGW (decided in Phase 1, revised from "winelib").** Phase 1 needs no Linux syscalls, and a PE exe is independent of Wine's build internals: yabridge's winelib host has repeatedly broken on new Wine versions. The VST3 hosting core (`host/src/vst3host.*`) is kept separate from transport. **Open for Phase 2:** how the PE host talks to the arm64 engine. Candidates, to be decided by measuring wakeup latency under Box64: (a) a file-backed shared mapping (`CreateFileMapping` on a file in `files/`, mmap'd `MAP_SHARED` by both sides) plus Wine's AF_UNIX Winsock for control and wakeups; (b) the same mapping with polling or spin-then-sleep wakeups; (c) a small winelib or unix-side helper for `futex`, only if (a) and (b) can't meet the latency target.
+- **Bridge host: a plain x86_64 Windows exe built with MinGW (decided in Phase 1, revised from "winelib").** Phase 1 needs no Linux syscalls, and a PE exe is independent of Wine's build internals: yabridge's winelib host has repeatedly broken on new Wine versions. The VST3 hosting core (`host/src/vst3host.*`) is kept separate from transport. **Decided in Phase 2:**
+  - **Transport:** a file-backed shared mapping (`files/ipc/slotN.shm`): the engine `mmap`s it, and the host uses `CreateFileMapping`, which Wine maps `MAP_SHARED`.
+  - **Wakeups:** Linux futexes on words in that mapping. The PE host issues them as a raw x86_64 `syscall`. Wine x86_64 doesn't enable syscall user dispatch, and Box64 translates the call.
+  - **Control:** a request/response mailbox in the same mapping.
+  - **Ring indices:** `seq_cst` atomics. Verified: 0 mismatches in 1.9 M samples without `STRONGMEM`.
 
 ## 2. Constraint 1: exec restrictions (W^X), and the two editions
 

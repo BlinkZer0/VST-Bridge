@@ -170,7 +170,7 @@ step_host() {
     rm -rf "$pi" "$b" && mkdir -p "$pi/pluginterfaces" "$b"
     tar -xzf "$t" -C "$pi/pluginterfaces" --strip-components=1
     local src="$REPO/host/src"
-    local flags=(-std=c++20 -O2 -g0 -municode -DUNICODE -D_UNICODE -Wall -I"$pi" -I"$src")
+    local flags=(-std=c++20 -O2 -g0 -municode -DUNICODE -D_UNICODE -Wall -I"$pi" -I"$src" -I"$REPO/shared")
     for f in "$src"/*.cpp "$pi/pluginterfaces/base/funknown.cpp"; do
         x86_64-w64-mingw32-g++ "${flags[@]}" -c "$f" -o "$b/$(basename "${f%.cpp}").o"
     done

@@ -49,6 +49,23 @@ struct RenderStats {
     std::vector<double> peakDb, rmsDb;
 };
 
+// One MIDI message at a sample offset inside the current block.
+struct BlockMidi {
+    int32_t offset;
+    uint8_t status, d1, d2;
+};
+
+// One parameter change at a sample offset inside the current block.
+struct BlockParam {
+    uint32_t id;
+    int32_t offset;
+    double value;
+};
+
+struct BlockCounters {
+    int32_t notes = 0, ccMapped = 0, ccUnmapped = 0;
+};
+
 class Plugin {
 public:
     // path: a .vst3 bundle directory or a single-file .vst3 DLL (Windows path).
@@ -60,12 +77,31 @@ public:
     std::vector<BusDesc> audioIn, audioOut, eventIn;
     std::vector<ParamDesc> params;
 
-    // Set up processing, render, and tear processing down again.
+    // Offline render = begin + process per block + end.
     bool render(const RenderSettings& s, RenderStats& st, std::string& err);
+
+    // ---- Streaming API (audio thread: process; begin/end from the main thread)
+    bool begin(double sampleRate, int32_t maxBlock, bool realtime, std::string& err);
+    // in: inChannels() pointers (or nullptr), out: outChannels() pointers. n <= maxBlock.
+    bool process(int32_t n, const BlockMidi* midi, size_t nMidi, const BlockParam* prm, size_t nPrm,
+                 const float* const* in, float* const* out, int64_t projectFrame, BlockCounters& c);
+    void end();
+    int inChannels() const;   // main input bus channels (0 for instruments)
+    int outChannels() const;  // main output bus channels
+
+    // ---- Controller / state (main thread)
+    double getParam(uint32_t id);
+    void setParam(uint32_t id, double normalized);      // controller side only
+    std::string paramText(uint32_t id, double normalized);
+    bool getState(std::string& component, std::string& controller);
+    bool setState(const std::string& component, const std::string& controller, std::string& err);
 
     struct Impl;
     std::unique_ptr<Impl> impl;
 };
+
+// True for parameters a user should see (drops JUCE's "MIDI CC n|m" emulation parameters).
+bool isUserParam(const ParamDesc& p);
 
 // Pump the Win32 message queue for roughly `ms` milliseconds (JUCE posts async work there).
 void pumpMessages(int ms);
