@@ -38,6 +38,11 @@ import java.util.concurrent.Executors
  * MIDI device), edit parameters, save/load presets, and watch the real-time stats.
  */
 class PlayerActivity : Activity() {
+    companion object {
+        private const val REQ_IMPORT_FILE = 41
+        private const val REQ_IMPORT_TREE = 42
+    }
+
 
     private lateinit var bridge: Bridge
     private val io = Executors.newSingleThreadExecutor()
@@ -93,6 +98,14 @@ class PlayerActivity : Activity() {
                 val (k, v) = kv.split("=", limit = 2).let { it[0].trim() to it.getOrNull(1)?.trim() }
                 k.toIntOrNull()?.takeIf { it in 1..8 }?.let { SlotManager.assign(it, v?.ifEmpty { null }) }
             }
+            // adb: --es importZip <name.zip in Android/data/<pkg>/files>  (same importer as the Add button)
+            intent?.getStringExtra("importZip")?.let { z ->
+                val f = File(getExternalFilesDir(null), z)
+                val r = runCatching { f.inputStream().use { PluginImport(this).importZip(it) } }
+                    .getOrElse { PluginImport.Result(emptyList(), "Import failed: ${it.message}") }
+                android.util.Log.i("VSTGHOST", "import $z: ${r.message}")
+                ui.post { refreshPlugins() }
+            }
             // adb: am start -n <pkg>/com.vstghost.PlayerActivity --es load "E-Piano"
             intent?.getStringExtra("load")?.let { name ->
                 ui.post {
@@ -103,6 +116,34 @@ class PlayerActivity : Activity() {
             }
         }
         ui.postDelayed(statsTick, 500)
+    }
+
+    // ------------------------------------------------------------------ add plugins (import)
+
+    private fun addPluginDialog() {
+        AlertDialog.Builder(this).setTitle("Add a Windows VST3 plugin")
+            .setItems(arrayOf("A .vst3 file or a .zip download", "A .vst3 folder (bundle)")) { _, which ->
+                if (which == 0) startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "*/*"
+                }, REQ_IMPORT_FILE)
+                else startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_IMPORT_TREE)
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    @Deprecated("Activity result API is fine for this plain Activity")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        val uri = data?.data ?: return
+        if (resultCode != RESULT_OK || (requestCode != REQ_IMPORT_FILE && requestCode != REQ_IMPORT_TREE)) return
+        setStatus("Adding plugin…")
+        io.execute {
+            val r = runCatching {
+                if (requestCode == REQ_IMPORT_TREE) PluginImport(this).importTree(uri) else PluginImport(this).importDocument(uri)
+            }.getOrElse { PluginImport.Result(emptyList(), "Import failed: ${it.message}") }
+            setStatus(r.message + if (r.imported.isNotEmpty()) " · pick it above and press Load" else "")
+            ui.post { refreshPlugins() }
+        }
     }
 
     override fun onDestroy() {
@@ -137,6 +178,7 @@ class PlayerActivity : Activity() {
         pluginSpinner = Spinner(this)
         top.addView(pluginSpinner, LinearLayout.LayoutParams(0, dp(40), 1f))
         btn("Load", top) { loadSelected() }
+        btn("Add", top) { addPluginDialog() }
         btn("Editor", top) {
             if (!bridge.isRunning) android.widget.Toast.makeText(this, "Load a plugin first", android.widget.Toast.LENGTH_SHORT).show()
             else if (bridge.isNativeLoaded)
