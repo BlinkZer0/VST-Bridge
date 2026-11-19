@@ -59,7 +59,8 @@ VGN_EXPORT int vgn_set_state(vgn_plugin*, const void* data, int32_t size);
 VGN_EXPORT void vgn_free(void*);
 
 // Editor: attaches the plugin's own editor (JUCE AudioProcessorEditor) into `viewGroup`, scaled so
-// it fits availW x availH physical pixels. Returns 1 on success; *w, *h = the editor's size in
+// it fits availW x availH physical pixels but never below its logical size (the caller scales a
+// larger view down as a whole). Returns 1 on success; *w, *h = the editor's size in
 // physical pixels after scaling.
 VGN_EXPORT int vgn_editor_open(vgn_plugin*, JNIEnv* env, jobject viewGroup, int32_t availW, int32_t availH,
                                int32_t* w, int32_t* h);

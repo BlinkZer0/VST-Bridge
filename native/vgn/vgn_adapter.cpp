@@ -203,11 +203,14 @@ int vgn_editor_open(vgn_plugin* p, JNIEnv*, jobject viewGroup, int32_t availW, i
     }
     auto* ed = p->editor.get();
     // JUCE works in logical pixels (physical / display density). Scale the whole UI so the editor
-    // fits the space we were given.
+    // fits the space we were given, but never below one physical pixel per logical pixel: a web UI
+    // (WebView) lays its page out in the view's pixels and does not reflow below its design width,
+    // so a smaller view clips the page. The caller scales a too-large view down as a whole instead
+    // (ZoomLayout), which keeps the page intact.
     const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
     const double density = display ? display->scale : 1.0;
     const int lw = std::max(ed->getWidth(), 1), lh = std::max(ed->getHeight(), 1);
-    const double fit = std::min(availW / (lw * density), availH / (lh * density));
+    const double fit = std::max(std::min(availW / (lw * density), availH / (lh * density)), 1.0 / density);
     juce::Desktop::getInstance().setGlobalScaleFactor((float)std::max(0.1, fit));
     if (ed->isOnDesktop()) ed->removeFromDesktop();  // moving to a new screen: re-parent the view
     ed->setVisible(true);

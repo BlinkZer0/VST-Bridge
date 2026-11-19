@@ -32,18 +32,28 @@ set(FETCHCONTENT_SOURCE_DIR_JUCE "${CMAKE_CURRENT_LIST_DIR}/juce-shim" CACHE PAT
 set(JUCE_DIR "${CMAKE_CURRENT_LIST_DIR}/juce-shim" CACHE PATH "" FORCE)
 include(${CMAKE_CURRENT_LIST_DIR}/juce-shim/VgJuce.cmake)
 
-# vg_add_juce_project(<name> (URL <url> SHA256 <sha> | GIT <repo> COMMIT <sha> [SUBMODULES <paths...>])
+# vg_add_juce_project(<name> [URL <url> SHA256 <sha> | GIT <repo> COMMIT <sha> [SUBMODULES <paths...>]]
 #                     [LOCAL <folder name>] [SUBDIR <dir with CMakeLists.txt>])
+# With neither URL nor GIT the project is local-only: built from VG_PLUGIN_SRC_ROOT/<LOCAL> when that
+# folder exists, otherwise skipped (not an error, so the default build stays reproducible).
 function(vg_add_juce_project name)
     cmake_parse_arguments(A "" "URL;SHA256;GIT;COMMIT;LOCAL;SUBDIR" "SUBMODULES" ${ARGN})
     if(VG_NATIVE_PLUGINS AND NOT name IN_LIST VG_NATIVE_PLUGINS)
         return()
     endif()
     string(TOUPPER "vg_src_${name}" up)
+    set(local "")
     if(VG_PLUGIN_SRC_ROOT AND A_LOCAL AND EXISTS "${VG_PLUGIN_SRC_ROOT}/${A_LOCAL}")
-        set(FETCHCONTENT_SOURCE_DIR_${up} "${VG_PLUGIN_SRC_ROOT}/${A_LOCAL}")
+        set(local "${VG_PLUGIN_SRC_ROOT}/${A_LOCAL}")
+        set(FETCHCONTENT_SOURCE_DIR_${up} "${local}")
     endif()
-    if(A_GIT)
+    if(NOT A_URL AND NOT A_GIT)
+        if(NOT local)
+            message(STATUS "VgJuce: project ${name} is local-only and ${A_LOCAL} is not under VG_PLUGIN_SRC_ROOT: skipped")
+            return()
+        endif()
+        set(vg_src_${name}_SOURCE_DIR "${local}")
+    elseif(A_GIT)
         # A pinned commit; only the submodules the plugin itself needs (never its own JUCE copy).
         FetchContent_Declare(vg_src_${name} GIT_REPOSITORY ${A_GIT} GIT_TAG ${A_COMMIT}
             GIT_SUBMODULES ${A_SUBMODULES} GIT_PROGRESS FALSE SOURCE_SUBDIR do-not-configure)
@@ -51,7 +61,9 @@ function(vg_add_juce_project name)
         FetchContent_Declare(vg_src_${name} URL ${A_URL} URL_HASH SHA256=${A_SHA256}
             SOURCE_SUBDIR do-not-configure DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
     endif()
-    FetchContent_MakeAvailable(vg_src_${name})
+    if(A_URL OR A_GIT)
+        FetchContent_MakeAvailable(vg_src_${name})
+    endif()
     set(dir "${vg_src_${name}_SOURCE_DIR}")
     if(A_SUBDIR)
         set(dir "${dir}/${A_SUBDIR}")
@@ -70,6 +82,10 @@ vg_add_juce_project(brass LOCAL Brass-Knuckles SUBDIR vst
 vg_add_juce_project(pedalfaster LOCAL Pedal=Faster
     URL https://github.com/BlinkZer0/Pedal-Faster/archive/037df15ef53009a40b9f4fb272d10a08d9076530.tar.gz
     SHA256 2919368f70fa97c3cdce4f7928cbc0875107cea57a16573f00414d8f7060b97c)
+# No Strings (cello) and The Ham (organ): JUCE 8 + WebView2 web UIs. Not published as public
+# archives yet, so local-only: -Pvg.pluginSrcRoot=<folder with "No Strings" and "The Ham">.
+vg_add_juce_project(nostrings LOCAL "No Strings" SUBDIR vst)
+vg_add_juce_project(theham LOCAL "The Ham" SUBDIR vst)
 
 # ---- Third-party open-source JUCE plugins (unmodified upstream source) ----
 # Odin2 (GPL-3.0): https://github.com/TheWaveWarden/odin2

@@ -8,7 +8,7 @@ Prerequisites: Phase 2 setup; payload series 2 built (`payload/build.sh`, needs 
 ```powershell
 $env:JAVA_HOME = "C:\Program Files\Android\openjdk\jdk-21.0.8"
 # Odin2 does not build natively yet (modal loops): build the other three.
-.\gradlew.bat assemblePlayDebug "-Pvg.nativePlugins=epiano;brass;pedalfaster"
+.\gradlew.bat assemblePlayDebug "-Pvg.nativePlugins=epiano;brass;pedalfaster;nostrings;theham" "-Pvg.pluginSrcRoot=C:/Users/Randy/OneDrive/Documents/GitHub"
 $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 & $adb install -r app\build\outputs\apk\play\debug\app-play-debug.apk
 & $adb shell am start -n com.vstghost/com.vstghost.PlayerActivity

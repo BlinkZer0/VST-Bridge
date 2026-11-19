@@ -59,6 +59,7 @@ within 90 s after the editor was closed (Dexed, ProM, glBars, DragonflyEarlyRefl
 | Pedal Faster, Windows build (JUCE 9, GDI) | yes | complete, 1.7 s open |
 | No Strings, Windows build (JUCE 8.0.17) | yes, 55 parameters, 0.6 s load | blank: the editor is a WebView2 (Edge/Chromium) web UI, which the Wine prefix cannot provide — use the native build |
 | The Ham, Windows build (JUCE 8.0.17) | yes, 145 parameters, 0.6 s load | blank (WebView2 web UI, as above) |
+| No Strings, The Ham (native builds) | yes, 4–8 ms load | complete web UI editors (Android WebView), presets switch from the UI |
 | E-Piano, Brass Knuckles, Pedal Faster (native builds) | yes, 40–140 µs per block | native editors |
 | Odin2 (JUCE 7, software renderer) | yes | complete (Phase 4) |
 
