@@ -1,0 +1,101 @@
+ntdll: Android accommodations (anonymous image sections, inaccessible paths read as missing).
+
+Two Android accommodations in ntdll's unix side, both env-gated:
+
+VSTGHOST_IMAGE_COPY=1 — Wine maps a PE file's sections with a private file mapping, writes
+relocations into them (copy-on-write) and then makes the code section executable again. On
+Android that last step is an SELinux "execmod" on an app_data_file, denied for apps targeting
+SDK >= 29 (the Play edition). The Termux glibc's mprotect() wrapper then takes an EACCES path
+that crashes with "free(): invalid pointer". Every DLL whose code section contains relocations
+was affected: dwrite.dll, d2d1.dll, user32.dll, most plugins. With the flag the loader takes its
+existing "removable media" path and pread()s the sections into anonymous memory instead
+(executable anonymous memory is allowed; Box64's JIT needs it anyway).
+
+VSTGHOST_DENIED_IS_MISSING=1 — NtQueryAttributesFile / NtQueryFullAttributesFile report an
+object the app may not stat (EACCES) as "not found". Windows programs probe parent directories
+(std::filesystem walks up from the plugin's own path); on Android those directories are
+unreadable, and STATUS_ACCESS_DENIED becomes an uncaught exception (Surge XT).
+
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -4809,6 +4809,23 @@
+ }
+ 
+ 
++/* VSTGHOST_DENIED_IS_MISSING=1: an attribute query that fails with EACCES reports the object as
++ * missing instead. On Android an app cannot stat most of the filesystem; Windows programs probing
++ * parent directories (std::filesystem::is_directory walks up from their own path) treat
++ * STATUS_ACCESS_DENIED as a hard error, while "not found" is what they expect. */
++static NTSTATUS probe_status( NTSTATUS status )
++{
++    static int enabled = -1;
++    if (enabled < 0)
++    {
++        const char *e = getenv( "VSTGHOST_DENIED_IS_MISSING" );
++        enabled = e && *e && *e != '0';
++    }
++    if (enabled && status == STATUS_ACCESS_DENIED) return STATUS_OBJECT_NAME_NOT_FOUND;
++    return status;
++}
++
++
+ /******************************************************************************
+  *              NtQueryFullAttributesFile   (NTDLL.@)
+  */
+@@ -4835,7 +4852,7 @@
+     else WARN( "%s not found (%x)\n", debugstr_us(attr->ObjectName), status );
+     free( unix_name );
+     free( nt_name.Buffer );
+-    return status;
++    return probe_status( status );
+ }
+ 
+ 
+@@ -4864,7 +4881,7 @@
+     else WARN( "%s not found (%x)\n", debugstr_us(attr->ObjectName), status );
+     free( unix_name );
+     free( nt_name.Buffer );
+-    return status;
++    return probe_status( status );
+ }
+ 
+ 
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -3371,6 +3371,26 @@
+ 
+ 
+ /***********************************************************************
++ *             image_copy_sections
++ *
++ * VSTGHOST_IMAGE_COPY=1: read PE sections into anonymous memory instead of mapping the file
++ * (the "removable media" path). On Android, SELinux denies making a file-backed private mapping
++ * executable again once it has been written to (execmod), which happens whenever an image is
++ * relocated; anonymous memory may become executable (execmem).
++ */
++static BOOL image_copy_sections(void)
++{
++    static int copy = -1;
++    if (copy < 0)
++    {
++        const char *env = getenv( "VSTGHOST_IMAGE_COPY" );
++        copy = env && *env && *env != '0';
++    }
++    return copy;
++}
++
++
++/***********************************************************************
+  *             virtual_map_image
+  *
+  * Map a PE image section into memory.
+@@ -3417,7 +3437,8 @@
+     status = map_image_view( &view, image_info, size, limit_low, limit_high, alloc_type );
+     if (status) goto done;
+ 
+-    status = map_image_into_view( view, nt_name, unix_fd, image_info, machine, shared_fd, needs_close );
++    status = map_image_into_view( view, nt_name, unix_fd, image_info, machine, shared_fd,
++                                  needs_close || image_copy_sections() );
+     if (status == STATUS_SUCCESS)
+     {
+         if (offset)

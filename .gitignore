@@ -17,3 +17,6 @@ payload/work/
 *.tar.zst
 *.tzst
 results-audio/
+
+# Editor settings
+.vscode/

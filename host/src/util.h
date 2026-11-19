@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -36,8 +37,19 @@ inline std::string utf8(const char16_t* s) {
 }
 
 // Unix absolute paths (as passed by the Android app) -> Wine's Z: drive.
+// Unix path -> Windows path. Paths under VSTGHOST_PLUGIN_DIR become D:\... (the app maps D: to its
+// plugin folder); everything else goes through Z:. Some plugins walk up from their own location, and
+// from Z: that walk crosses directories the app may not even stat.
 inline std::wstring toWinPath(std::wstring p) {
-    if (!p.empty() && p[0] == L'/') p = L"Z:" + p;
+    static const std::wstring plugRoot = [] {
+        std::wstring r;
+        if (const char* e = std::getenv("VSTGHOST_PLUGIN_DIR")) for (const char* c = e; *c; ++c) r += (wchar_t)(unsigned char)*c;
+        while (!r.empty() && r.back() == L'/') r.pop_back();
+        return r;
+    }();
+    if (!plugRoot.empty() && p.size() > plugRoot.size() && p.compare(0, plugRoot.size(), plugRoot) == 0 && p[plugRoot.size()] == L'/')
+        p = L"D:" + p.substr(plugRoot.size());
+    else if (!p.empty() && p[0] == L'/') p = L"Z:" + p;
     for (auto& c : p) if (c == L'/') c = L'\\';
     return p;
 }

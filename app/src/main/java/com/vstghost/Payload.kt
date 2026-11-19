@@ -33,7 +33,9 @@ class Payload(private val context: Context) {
         const val WAYLAND_SOCKET = "wl-0"
         /** Must match X64LIBS (+ the xkbregistry stub) in payload/build.sh. */
         const val EMULATED_LIBS = "libwayland-client.so.0:libffi.so.8:libxkbcommon.so.0:libxkbregistry.so.0:" +
-            "libfreetype.so.6:libpng16.so.16:libz.so.1:libbz2.so.1.0:libbz2.so.1:libbrotlidec.so.1:libbrotlicommon.so.1"
+            "libfreetype.so.6:libpng16.so.16:libz.so.1:libbz2.so.1.0:libbz2.so.1:libbrotlidec.so.1:libbrotlicommon.so.1:" +
+            // Mesa (software OpenGL for plugin editors): emulated too, so it talks to the emulated Wayland client.
+            "libEGL.so.1:libGLESv2.so.2:libGL.so.1:libglapi.so.0:libdrm.so.2:libexpat.so.1:libwayland-server.so.0:libwayland-egl.so.1:libzstd.so.1:libtinfo.so.6"
     }
 
     val isPlay: Boolean = BuildConfig.EDITION == "play"
@@ -61,6 +63,7 @@ class Payload(private val context: Context) {
     /** No payload yet, or a different archive than the installed one is available. */
     fun needsInstall(): Boolean {
         if (installedVersion == null) return true
+        if (!File(root, "wine/bin/wine").isFile || !File(root, "VERSION").isFile) return true  // damaged tree
         val now = sourceStamp() ?: return false
         return File(root, ".installed-source").takeIf { it.isFile }?.readText()?.trim() != now
     }
@@ -101,6 +104,10 @@ class Payload(private val context: Context) {
             deleteTree(staging)
             val res = NativeBridge.extract(src.fd, src.offset, src.length, staging.path, PLACEHOLDER, root.path, progress)
             if (res.startsWith("ERROR: ")) return InstallResult(false, res, null, src.label, src.length)
+            // Markers first: if we are killed while deleting the old tree, the next start reinstalls
+            // instead of trusting a half-deleted rootfs.
+            File(root, ".installed").delete()
+            File(root, ".installed-source").delete()
             deleteTree(root)
             if (!staging.renameTo(root)) return InstallResult(false, "rename ${staging} -> $root failed", res, src.label, src.length)
             File(root, "tmp").mkdirs()
@@ -161,7 +168,10 @@ class Payload(private val context: Context) {
 
     fun environment(extra: Map<String, String> = emptyMap()): Map<String, String> {
         val r = root.path
-        if (root.isDirectory) EditorDisplay.ensure(this)  // listening before any Wine process starts
+        if (root.isDirectory) {
+            EditorDisplay.ensure(this)  // listening before any Wine process starts
+            ensureDrives()
+        }
         return linkedMapOf(
             "HOME" to "$r/home",
             "TMPDIR" to "$r/tmp",
@@ -178,13 +188,65 @@ class Payload(private val context: Context) {
             "XDG_RUNTIME_DIR" to "$r/run",
             "WAYLAND_DISPLAY" to "$r/run/$WAYLAND_SOCKET",
             "VSTGHOST_WL_ONE_TOPLEVEL" to "1",
+            // Wine patch 0004: read PE images into anonymous memory instead of mapping the file.
+            // SELinux denies re-enabling execute on a file mapping that was written to (execmod),
+            // which relocation does; the Play edition (targetSdk 36) hits it on every DLL whose
+            // code section has relocations (dwrite.dll, d2d1.dll, most plugins).
+            "VSTGHOST_IMAGE_COPY" to "1",
+            // Wine patch 0004: paths the app may not stat read as "not found" (plugins probing
+            // parent directories would otherwise die of an access-denied exception).
+            "VSTGHOST_DENIED_IS_MISSING" to "1",
+            // Mesa: software rendering only, drivers from the payload.
+            "LIBGL_ALWAYS_SOFTWARE" to "1",
+            "GALLIUM_DRIVER" to "llvmpipe",
+            "LP_NUM_THREADS" to "2",  // leave cores for audio
+            // 128-bit (SSE) JIT code: Box64 mistranslated some of llvmpipe's AVX texture sampling
+            "LP_NATIVE_VECTOR_WIDTH" to "128",
+            // ... and LLVM still emitted AVX elsewhere while cpuid advertised it: every D2D bitmap
+            // (knobs, image strips) came out blank. Hiding AVX/AVX2 from x86 code fixes it; SSE
+            // paths are what Box64 translates best anyway.
+            "BOX64_AVX" to "0",
+            "BOX64_AVX2" to "0",
+            // Direct2D editors (JUCE 8 before its Wine check) are rasterized in software for every
+            // frame they present: cap their "refresh rate" at 20 Hz (Wine patch 0003).
+            "VSTGHOST_VBLANK_MS" to "50",
+            // Plugins live on D: (dosdevices/d: -> files/plugins, see ensureDrives). Some plugins walk
+            // up from their own path (Surge XT looks for a portable data folder); from Z: that walk
+            // reaches /data/user/0, which an app may not even stat, and they abort.
+            "VSTGHOST_PLUGIN_DIR" to File(context.filesDir, "plugins").path,
+            "LIBGL_DRIVERS_PATH" to "$r/x64libs/dri",
+            "EGL_PLATFORM" to "wayland",
             "BOX64_PATH" to "$r/wine/bin",
             "BOX64_RCFILE" to "$r/etc/box64.box64rc",
             "BOX64_DYNACACHE" to "0",
             "WINEPREFIX" to "$r/prefix",
             "WINEDEBUG" to "fixme-all",
             "WINEDLLOVERRIDES" to "winemenubuilder.exe=d;mscoree=d;mshtml=d",
-        ) + extra
+        ) + extra + debugEnv()  // the debug file wins, that is its point
+    }
+
+    /** D: = files/plugins (the payload's prefix ships with only C: and Z:). */
+    private fun ensureDrives() {
+        val link = File(root, "prefix/dosdevices/d:")
+        val target = File(context.filesDir, "plugins").apply { mkdirs() }.path
+        val current = runCatching { Os.readlink(link.path) }.getOrNull()
+        if (current == target) return
+        runCatching { link.delete(); Os.symlink(target, link.path) }
+    }
+
+    /**
+     * Debug builds: KEY=VALUE lines in files/env.debug are added to every Wine process's environment
+     * (Box64 and Wine tuning over adb without rebuilding: `run-as <pkg> sh -c 'echo X=1 > files/env.debug'`).
+     */
+    private fun debugEnv(): Map<String, String> {
+        if (!BuildConfig.DEBUG) return emptyMap()
+        val f = File(context.filesDir, "env.debug")
+        if (!f.isFile) return emptyMap()
+        return f.readLines().mapNotNull { line ->
+            val t = line.trim()
+            if (t.isEmpty() || t.startsWith("#") || '=' !in t) null
+            else t.substringBefore('=').trim() to t.substringAfter('=').trim()
+        }.toMap()
     }
 
     fun describe(): String = buildString {

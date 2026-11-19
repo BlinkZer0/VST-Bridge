@@ -8,7 +8,7 @@
 #   jnilibs/arm64-v8a/*.so            Play edition: arm64 loader, Box64 and glibc as lib*.so
 #   play-assets/                      Play edition: payload + soname map, bundled as APK assets
 #
-# Usage: payload/build.sh [step...]   steps: glibc box64 wine x64libs prefix hello host etc pack play (default: all)
+# Usage: payload/build.sh [step...]   steps: glibc box64 wine mesa x64libs prefix hello host etc pack play (default: all)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -108,7 +108,7 @@ step_wine() {
     (cd "$b" && "$src/configure" \
         --prefix=/opt/vstghost-wine \
         --enable-archs=x86_64 --disable-tests \
-        --without-x --with-wayland --without-opengl --without-vulkan --without-sdl \
+        --without-x --with-wayland --with-opengl --without-vulkan --without-sdl \
         --with-freetype --without-fontconfig \
         --without-pulse --without-alsa --without-oss --without-gstreamer --without-ffmpeg \
         --without-cups --without-dbus --without-sane --without-gphoto --without-v4l2 \
@@ -126,6 +126,30 @@ step_wine() {
     "$STAGE/wine/bin/wine" --version
     echo "x86_64 unix-side libraries Wine links (Box64 must wrap or find these):"
     find "$STAGE/wine/lib/wine/x86_64-unix" -name '*.so' -exec objdump -p {} \; | awk '/NEEDED/{print $2}' | sort | uniq -c
+}
+
+# Mesa, x86_64, run by Box64 like Wine: OpenGL through EGL on Wayland (our compositor), rendered in
+# software. llvmpipe (LLVM linked statically, only the parts Mesa uses) is needed for the Direct3D 10/11
+# feature level that Direct2D (JUCE 8 editors) requires; softpipe stays as a fallback. Plugin editors
+# that draw with OpenGL need it too (Surge XT, DPF plugins, ...).
+step_mesa() {
+    log "Mesa ${MESA_VERSION} (x86_64, software GL, EGL on Wayland)"
+    local t src="$WORK/mesa-src" b="$WORK/mesa-build" inst="$WORK/mesa-install"
+    t="$(fetch "$MESA_URL" "$MESA_SHA256" "mesa-${MESA_VERSION}.tar.xz")"
+    rm -rf "$src" "$b" "$inst" && mkdir -p "$src"
+    tar -xJf "$t" -C "$src" --strip-components=1
+    printf "[binaries]\nllvm-config = '%s'\n" "${LLVM_CONFIG:-/usr/lib/llvm-18/bin/llvm-config}" > "$WORK/mesa-native.ini"
+    meson setup "$b" "$src" --native-file "$WORK/mesa-native.ini" --prefix=/opt/vstghost-mesa --libdir=lib \
+        --buildtype=release -Dstrip=true -Db_asneeded=true \
+        -Dplatforms=wayland -Dgallium-drivers=llvmpipe,softpipe -Dvulkan-drivers= -Dglx=disabled -Degl=enabled \
+        -Dgbm=disabled -Dgles1=disabled -Dgles2=enabled -Dopengl=true -Dglvnd=disabled \
+        -Dllvm=enabled -Dshared-llvm=disabled \
+        -Dshared-glapi=enabled -Dzstd=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dlmsensors=disabled \
+        -Dbuild-tests=false -Dvideo-codecs= -Dgallium-va=disabled -Dgallium-vdpau=disabled -Dgallium-xa=disabled \
+        -Dgallium-nine=false -Dgallium-opencl=disabled -Dosmesa=false -Dexpat=enabled -Dshader-cache=disabled
+    ninja -C "$b"
+    DESTDIR="$inst" ninja -C "$b" install
+    find "$inst/opt/vstghost-mesa/lib" -maxdepth 2 \( -name '*.so*' -o -name '*.json' \) | sort
 }
 
 # x86_64 libraries the Wine unix side needs at runtime (run emulated by Box64; see BOX64_EMULATED_LIBS
@@ -146,6 +170,21 @@ step_x64libs() {
         pkg="$(dpkg -S "$real" 2>/dev/null | head -1 | cut -d: -f1-2)"
         printf '%s\t%s\t%s\n' "$l" "$pkg" "$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null)" >> "$d/MANIFEST"
     done
+    # Mesa (step_mesa): EGL + GLES + its gallium megadriver and DRI stubs, plus what they link.
+    local m="$WORK/mesa-install/opt/vstghost-mesa/lib"
+    if [ -d "$m" ]; then
+        cp -a "$m"/libEGL.so* "$m"/libGLESv2.so* "$m"/libgallium-*.so "$d/"  # (Mesa 25: glapi is inside libgallium)
+        [ -d "$m/dri" ] && cp -a "$m/dri" "$d/dri"
+        for l in libdrm.so.2 libexpat.so.1 libwayland-server.so.0 libwayland-egl.so.1 libzstd.so.1 libtinfo.so.6; do
+            real="$(readlink -f "/usr/lib/x86_64-linux-gnu/$l")"
+            cp "$real" "$d/$l" && strip --strip-unneeded "$d/$l"
+            pkg="$(dpkg -S "$real" 2>/dev/null | head -1 | cut -d: -f1-2)"
+            printf '%s\t%s\t%s\n' "$l" "$pkg" "$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null)" >> "$d/MANIFEST"
+        done
+        printf 'mesa\t%s\t%s\n' "$MESA_VERSION" "$MESA_SHA256" >> "$d/MANIFEST"
+    else
+        echo "note: no Mesa build (step mesa); OpenGL editors will not work"
+    fi
     gcc -shared -fPIC -O2 -s -Wl,-soname,libxkbregistry.so.0 -Wl,--version-script="$HERE/stubs/xkbregistry_stub.map" \
         "$HERE/stubs/xkbregistry_stub.c" -o "$d/libxkbregistry.so.0"
     printf 'libxkbregistry.so.0\tstub\tpayload/stubs/xkbregistry_stub.c\n' >> "$d/MANIFEST"
@@ -176,6 +215,16 @@ step_prefix() {
     env -i PATH="$STAGE/wine/bin:/usr/bin:/bin" HOME="$WORK/home" USER=vstghost \
         WINEPREFIX="$STAGE/prefix" WINEDEBUG=-all \
         "$STAGE/wine/bin/wine" reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d wayland,null /f
+    # Fonts: Wine ships Tahoma (+ Marlett, Symbol), not Windows' UI fonts. DirectWrite and GDI then
+    # find no family for e.g. Verdana (JUCE 9's default) and draw no text at all; map them to Tahoma.
+    local f
+    for f in "Verdana" "Segoe UI" "Segoe UI Variable" "Arial" "Helvetica" "Calibri" "Microsoft Sans Serif" \
+             "MS Sans Serif" "MS Shell Dlg" "MS Shell Dlg 2" "Consolas" "Courier New" "Lucida Console" \
+             "Lucida Grande" "Trebuchet MS" "Inter" "Roboto"; do
+        env -i PATH="$STAGE/wine/bin:/usr/bin:/bin" HOME="$WORK/home" USER=vstghost \
+            WINEPREFIX="$STAGE/prefix" WINEDEBUG=-all \
+            "$STAGE/wine/bin/wine" reg add 'HKCU\Software\Wine\Fonts\Replacements' /v "$f" /d Tahoma /f > /dev/null
+    done
     env -i PATH="$STAGE/wine/bin:/usr/bin:/bin" WINEPREFIX="$STAGE/prefix" "$STAGE/wine/bin/wineserver" -w
     # Never re-run wineboot's update on the phone (slow): prefix and Wine ship together.
     echo disable > "$STAGE/prefix/.update-timestamp"
@@ -292,7 +341,7 @@ PY
 }
 
 STEPS=("$@")
-[ ${#STEPS[@]} -eq 0 ] && STEPS=(glibc box64 wine x64libs prefix hello host etc pack play)
+[ ${#STEPS[@]} -eq 0 ] && STEPS=(glibc box64 wine mesa x64libs prefix hello host etc pack play)
 mkdir -p "$WORK" "$STAGE"
 for s in "${STEPS[@]}"; do "step_$s"; done
 log "done: $OUT"
