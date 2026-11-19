@@ -243,6 +243,40 @@ std::string handle(const std::string& req) {
         bool ok = p.setState(b64dec(a[1]), b64dec(a[2]), err);
         j.boolean("ok", ok);
         if (!ok) j.str("error", err);
+    } else if (cmd == "programs") {
+        // Factory programs (VST3 program lists). "set_program <listId> <index>" selects one.
+        j.boolean("ok", true).beginArr("lists");
+        for (const auto& pl : p.programLists) {
+            double cur = -1;
+            if (pl.paramId != 0xFFFFFFFFu && pl.programs.size() > 1) cur = std::round(p.getParam(pl.paramId) * (double)(pl.programs.size() - 1));
+            j.beginObj().num("id", pl.id).str("name", pl.name).boolean("selectable", pl.paramId != 0xFFFFFFFFu).num("current", cur).beginArr("programs");
+            for (const auto& n : pl.programs) j.str(nullptr, n);
+            j.endArr().endObj();
+        }
+        j.endArr();
+    } else if (cmd == "set_program" && a.size() >= 3) {
+        const int32_t listId = atoi(a[1].c_str());
+        const int32_t index = atoi(a[2].c_str());
+        const ProgramList* pl = nullptr;
+        for (const auto& l : p.programLists) if (l.id == listId) pl = &l;
+        if (!pl || pl->paramId == 0xFFFFFFFFu) j.boolean("ok", false).str("error", "no program-change parameter");
+        else if (index < 0 || index >= (int32_t)pl->programs.size()) j.boolean("ok", false).str("error", "no such program");
+        else {
+            const double v = pl->programs.size() > 1 ? (double)index / (double)(pl->programs.size() - 1) : 0.0;
+            p.setParam(pl->paramId, v);
+            queueParam(pl->paramId, v);
+            j.boolean("ok", true).str("program", pl->programs[(size_t)index]);
+        }
+    } else if (cmd == "load_preset" && a.size() >= 2) {
+        std::string err;
+        const bool ok = p.loadVstPreset(toWinPath(wide(a[1])), err);
+        j.boolean("ok", ok);
+        if (!ok) j.str("error", err);
+    } else if (cmd == "save_preset" && a.size() >= 2) {
+        std::string err;
+        const bool ok = p.saveVstPreset(toWinPath(wide(a[1])), err);
+        j.boolean("ok", ok);
+        if (!ok) j.str("error", err);
     } else if (cmd == "editor_open") {
         std::string err;
         const double t0 = nowMs();

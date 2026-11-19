@@ -59,6 +59,10 @@ struct VgnApi {
     void* handle = nullptr;
     decltype(&vgn_info_json) info = nullptr;
     decltype(&vgn_init) init = nullptr;
+    decltype(&vgn_program_count) programCount = nullptr;
+    decltype(&vgn_program_get) programGet = nullptr;
+    decltype(&vgn_program_name) programName = nullptr;
+    decltype(&vgn_program_set) programSet = nullptr;
     decltype(&vgn_create) create = nullptr;
     decltype(&vgn_destroy) destroy = nullptr;
     decltype(&vgn_prepare) prepare = nullptr;

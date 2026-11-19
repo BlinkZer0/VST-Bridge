@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define VGN_API_VERSION 1
+#define VGN_API_VERSION 2
 #define VGN_EXPORT __attribute__((visibility("default")))
 
 typedef struct vgn_plugin vgn_plugin;
@@ -46,6 +46,12 @@ VGN_EXPORT void vgn_param_info(vgn_plugin*, int32_t index, char* buf, int32_t bu
 VGN_EXPORT float vgn_param_get(vgn_plugin*, int32_t index);
 VGN_EXPORT void vgn_param_set(vgn_plugin*, int32_t index, float normalized);
 VGN_EXPORT void vgn_param_text(vgn_plugin*, int32_t index, float normalized, char* buf, int32_t bufSize);
+
+// Programs (JUCE AudioProcessor programs = the plugin's factory presets).
+VGN_EXPORT int32_t vgn_program_count(vgn_plugin*);
+VGN_EXPORT int32_t vgn_program_get(vgn_plugin*);
+VGN_EXPORT void vgn_program_name(vgn_plugin*, int32_t index, char* buf, int32_t bufSize);
+VGN_EXPORT void vgn_program_set(vgn_plugin*, int32_t index);
 
 // State: returns a malloc'd blob (free with vgn_free) and its size.
 VGN_EXPORT void* vgn_get_state(vgn_plugin*, int32_t* size);

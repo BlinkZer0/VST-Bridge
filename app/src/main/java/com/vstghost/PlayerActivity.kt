@@ -160,6 +160,25 @@ class PlayerActivity : Activity() {
         }
     }
 
+    /**
+     * adb while the player is running (singleTop): `am start -n <pkg>/.PlayerActivity`
+     *   --ei slot N              select a slot
+     *   --es load <name>         load that plugin into the selected slot
+     *   --es req "cmd\narg..."   send a request to the selected slot's plugin, answer in logcat
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.getIntExtra("slot", 0).takeIf { it in 1..8 }?.let { selectSlot(it) }
+        intent.getStringExtra("load")?.let { name ->
+            val i = plugins.indexOfFirst { it.nameWithoutExtension == name }
+            if (i >= 0) { pluginSpinner.setSelection(i); loadSelected() }
+        }
+        intent.getStringExtra("req")?.let { r ->
+            val slot = current
+            io.execute { android.util.Log.i(TAG, "req slot $slot ${r.lineSequence().first()}: ${Bridge.get(this, slot).request(r.replace("\\n", "\n"))}") }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         // The Tests screen points the keyboard/MIDI at slot 0 while it runs; take it back.
@@ -540,13 +559,83 @@ class PlayerActivity : Activity() {
 
     private fun presetDir() = File(filesDir, "presets/${loadedName ?: "none"}").apply { mkdirs() }
 
+    /**
+     * `.vstpreset` files for the loaded (bridged) plugin: shipped in its bundle
+     * (Contents/Resources/Presets) or installed in the prefix's "VST3 Presets" folders
+     * (Documents, ProgramData, Public Documents), where they sit under <vendor>/<plugin>.
+     */
+    private fun vstPresetFiles(): List<File> {
+        val b = bridge
+        val plug = b.plugin ?: return emptyList()
+        if (b.isNativeLoaded) return emptyList()
+        val key = plug.nameWithoutExtension.lowercase()
+        val bundle = File(plug, "Contents/Resources/Presets")
+        val shared = listOf("users/vstghost/Documents", "ProgramData", "users/Public/Documents")
+            .map { File(payload.root, "prefix/drive_c/$it/VST3 Presets") }
+        val found = mutableListOf<File>()
+        found += presetDir().listFiles()?.filter { it.isFile && it.extension.equals("vstpreset", true) }.orEmpty()
+        if (bundle.isDirectory) found += bundle.walkTopDown().filter { it.isFile && it.extension.equals("vstpreset", true) }
+        for (root in shared) if (root.isDirectory)
+            found += root.walkTopDown().filter { it.isFile && it.extension.equals("vstpreset", true) && it.relativeTo(root).path.lowercase().contains(key) }
+        return found.sortedBy { it.path.lowercase() }
+    }
+
     private fun presets() {
         val name = loadedName ?: run { status.text = "Load a plugin into ${slotName(current)} first."; return }
-        val files = presetDir().listFiles()?.filter { it.name.endsWith(".json") }?.sortedBy { it.name }.orEmpty()
-        val items = (listOf("＋ Save current sound as…") + files.map { it.name.removeSuffix(".json") }).toTypedArray()
-        AlertDialog.Builder(this).setTitle("Presets: $name").setItems(items) { _, which ->
-            if (which == 0) savePreset() else loadPreset(files[which - 1])
-        }.show()
+        val slot = current
+        setStatus("Reading presets…")
+        io.execute {
+            // Factory programs (VST3 program lists / JUCE programs), .vstpreset files, user presets.
+            data class Item(val label: String, val action: () -> Unit)
+            val items = mutableListOf<Item>()
+            val b = Bridge.get(this, slot)
+            val lists = b.request("programs")?.let { runCatching { JSONObject(it).optJSONArray("lists") }.getOrNull() }
+            if (lists != null) for (li in 0 until lists.length()) {
+                val l = lists.getJSONObject(li)
+                if (!l.optBoolean("selectable", false)) continue
+                val progs = l.optJSONArray("programs") ?: continue
+                val cur = l.optInt("current", -1)
+                val listName = l.optString("name").ifEmpty { "Programs" }
+                for (pi in 0 until progs.length()) {
+                    val mark = if (pi == cur) "● " else "   "
+                    items += Item("$mark$listName: ${progs.getString(pi)}") { setProgram(slot, l.optInt("id"), pi, progs.getString(pi)) }
+                }
+            }
+            for (f in vstPresetFiles()) items += Item("   ▣ ${f.nameWithoutExtension}") { loadVstPreset(slot, f) }
+            val user = presetDir().listFiles()?.filter { it.name.endsWith(".json") }?.sortedBy { it.name }.orEmpty()
+            for (f in user) items += Item("   ★ ${f.name.removeSuffix(".json")}") { loadPreset(f) }
+            setStatus(if (items.isEmpty()) "No factory presets found for $name." else "${items.size} presets.")
+            ui.post {
+                val labels = (listOf("＋ Save current sound as…") + items.map { it.label }).toTypedArray()
+                AlertDialog.Builder(this).setTitle("Presets: $name").setItems(labels) { _, which ->
+                    if (which == 0) savePreset() else items[which - 1].action()
+                }.show()
+            }
+        }
+    }
+
+    /** A file's path for the Wine host: inside the prefix as C:\..., elsewhere the unix path (the host maps it). */
+    private fun hostPath(f: File): String {
+        val driveC = File(payload.root, "prefix/drive_c")
+        return if (f.path.startsWith(driveC.path + "/")) "C:\\" + f.relativeTo(driveC).path.replace('/', '\\') else f.path
+    }
+
+    private fun setProgram(slot: Int, listId: Int, index: Int, label: String) {
+        io.execute {
+            val r = Bridge.get(this, slot).request("set_program\n$listId\n$index")?.let { JSONObject(it) }
+            loadParams()
+            captureState(slot)
+            setStatus(if (r?.optBoolean("ok") == true) "Program: $label" else "Program change failed: ${r?.optString("error")}")
+        }
+    }
+
+    private fun loadVstPreset(slot: Int, f: File) {
+        io.execute {
+            val r = Bridge.get(this, slot).request("load_preset\n${hostPath(f)}")?.let { JSONObject(it) }
+            loadParams()
+            captureState(slot)
+            setStatus(if (r?.optBoolean("ok") == true) "Loaded preset \"${f.nameWithoutExtension}\"." else "Preset load failed: ${r?.optString("error")}")
+        }
     }
 
     private fun savePreset() {
@@ -555,7 +644,16 @@ class PlayerActivity : Activity() {
         AlertDialog.Builder(this).setTitle("Save preset").setView(input).setPositiveButton("Save") { _, _ ->
             val name = input.text.toString().trim().replace(Regex("[^A-Za-z0-9 _.-]"), "_").ifEmpty { "Preset" }
             io.execute {
-                val st = Bridge.get(this, slot).request("get_state")?.let { JSONObject(it) }
+                val b = Bridge.get(this, slot)
+                if (!b.isNativeLoaded) {
+                    // Bridged plugins: a standard .vstpreset (readable by any VST3 host) in the app's
+                    // own preset folder. Not inside the Wine prefix: the prefix is part of the payload
+                    // and is replaced on every app update.
+                    val r = b.request("save_preset\n${hostPath(File(presetDir(), "$name.vstpreset"))}")?.let { JSONObject(it) }
+                    setStatus(if (r?.optBoolean("ok") == true) "Saved preset \"$name\" (.vstpreset)." else "Could not save: ${r?.optString("error")}")
+                    return@execute
+                }
+                val st = b.request("get_state")?.let { JSONObject(it) }
                 if (st == null || !st.optBoolean("ok")) { setStatus("Could not read the plugin state."); return@execute }
                 st.put("plugin", loadedName); st.put("name", name)
                 File(presetDir(), "$name.json").writeText(st.toString())

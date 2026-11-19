@@ -167,6 +167,15 @@ void vgn_param_text(vgn_plugin* p, int32_t i, float v, char* buf, int32_t size) 
     copyStr(q ? q->getText(v, 64) : juce::String(), buf, size);
 }
 
+int32_t vgn_program_count(vgn_plugin* p) { return p ? p->proc->getNumPrograms() : 0; }
+int32_t vgn_program_get(vgn_plugin* p) { return p ? p->proc->getCurrentProgram() : 0; }
+void vgn_program_name(vgn_plugin* p, int32_t i, char* buf, int32_t size) {
+    copyStr(p && i >= 0 && i < p->proc->getNumPrograms() ? p->proc->getProgramName(i) : juce::String(), buf, size);
+}
+void vgn_program_set(vgn_plugin* p, int32_t i) {
+    if (p && i >= 0 && i < p->proc->getNumPrograms()) p->proc->setCurrentProgram(i);
+}
+
 void* vgn_get_state(vgn_plugin* p, int32_t* size) {
     *size = 0;
     if (!p) return nullptr;

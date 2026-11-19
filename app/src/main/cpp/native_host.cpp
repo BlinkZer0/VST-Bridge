@@ -133,7 +133,9 @@ std::string nativeInit(JNIEnv* env, jobject context, const std::string& lib) {
                     sym(h, "vgn_param_info", a.paramInfo) && sym(h, "vgn_param_get", a.paramGet) &&
                     sym(h, "vgn_param_set", a.paramSet) && sym(h, "vgn_param_text", a.paramText) &&
                     sym(h, "vgn_get_state", a.getState) && sym(h, "vgn_set_state", a.setState) && sym(h, "vgn_free", a.free) &&
-                    sym(h, "vgn_editor_open", a.editorOpen) && sym(h, "vgn_editor_close", a.editorClose);
+                    sym(h, "vgn_editor_open", a.editorOpen) && sym(h, "vgn_editor_close", a.editorClose) &&
+                    sym(h, "vgn_program_count", a.programCount) && sym(h, "vgn_program_get", a.programGet) &&
+                    sym(h, "vgn_program_name", a.programName) && sym(h, "vgn_program_set", a.programSet);
     if (!ok) return "ERROR: " + lib + " does not export the vgn interface";
     if (apiVersion() != VGN_API_VERSION) return "ERROR: " + lib + " has vgn API " + std::to_string(apiVersion());
     if (!a.init(env, context)) return "ERROR: vgn_init failed";
@@ -272,6 +274,26 @@ std::string NativeInstance::request(const std::string& req) {
         snprintf(buf, sizeof buf, ",\"ok\":true,\"id\":%d,\"value\":%.9g", id, now);
         j += buf;
         j += ",\"text\":\"" + jsonEsc(text(id, now)) + "\"";
+    } else if (cmd == "programs") {
+        // One list, like the Wine host's "programs": JUCE's AudioProcessor programs.
+        const int32_t n = api_->programCount(p_);
+        snprintf(buf, sizeof buf, ",\"ok\":true,\"lists\":[{\"id\":0,\"name\":\"Programs\",\"selectable\":true,\"current\":%d,\"programs\":[", n > 0 ? api_->programGet(p_) : -1);
+        j += buf;
+        for (int32_t i = 0; i < n; ++i) {
+            char nm[256];
+            api_->programName(p_, i, nm, sizeof nm);
+            j += std::string(i ? "," : "") + "\"" + jsonEsc(nm) + "\"";
+        }
+        j += "]}]";
+    } else if (cmd == "set_program" && a.size() >= 3) {
+        const int32_t i = atoi(a[2].c_str());
+        if (i < 0 || i >= api_->programCount(p_)) j += ",\"ok\":false,\"error\":\"no such program\"";
+        else {
+            api_->programSet(p_, i);
+            char nm[256];
+            api_->programName(p_, i, nm, sizeof nm);
+            j += ",\"ok\":true,\"program\":\"" + jsonEsc(nm) + "\"";
+        }
     } else if (cmd == "get_state") {
         int32_t size = 0;
         void* d = api_->getState(p_, &size);

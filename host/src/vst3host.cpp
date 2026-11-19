@@ -23,6 +23,7 @@
 #include "pluginterfaces/vst/ivstmidicontrollers.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "pluginterfaces/vst/ivstprocesscontext.h"
+#include "pluginterfaces/vst/ivstunits.h"
 #include "pluginterfaces/gui/iplugview.h"
 #include "util.h"
 
@@ -507,6 +508,38 @@ std::unique_ptr<Plugin> Plugin::load(const std::wstring& path, std::string& err,
             if (I.controller->getParamStringByValue(pi.id, pi.defaultNormalizedValue, txt) == kResultOk) d.defaultText = utf8(txt);
             p->params.push_back(std::move(d));
         }
+
+        // Factory programs: IUnitInfo program lists, selected through a program-change parameter
+        // whose unit refers to the list (JUCE plugins with programs, Dexed cartridges, ...).
+        IUnitInfo* units = nullptr;
+        if (I.controller->queryInterface(IUnitInfo::iid.toTUID(), (void**)&units) == kResultOk && units) {
+            std::map<int32, int32> unitToList;
+            for (int32 i = 0; i < units->getUnitCount(); ++i) {
+                UnitInfo ui{};
+                if (units->getUnitInfo(i, ui) == kResultOk) unitToList[ui.id] = ui.programListId;
+            }
+            for (int32 i = 0; i < units->getProgramListCount(); ++i) {
+                ProgramListInfo li{};
+                if (units->getProgramListInfo(i, li) != kResultOk) continue;
+                ProgramList pl{li.id, utf8(li.name), 0xFFFFFFFFu, {}};
+                for (int32 k = 0; k < li.programCount; ++k) {
+                    String128 n{};
+                    pl.programs.push_back(units->getProgramName(li.id, k, n) == kResultOk ? utf8(n) : "Program " + std::to_string(k + 1));
+                }
+                p->programLists.push_back(std::move(pl));
+            }
+            for (int32 i = 0; i < I.controller->getParameterCount() && !p->programLists.empty(); ++i) {
+                ParameterInfo pi{};
+                if (I.controller->getParameterInfo(i, pi) != kResultOk || !(pi.flags & ParameterInfo::kIsProgramChange)) continue;
+                auto it = unitToList.find(pi.unitId);
+                const int32 listId = it != unitToList.end() ? it->second : kNoProgramListId;
+                ProgramList* target = nullptr;
+                for (auto& pl : p->programLists) if (pl.id == listId) target = &pl;
+                if (!target && p->programLists.size() == 1) target = &p->programLists[0];
+                if (target && target->paramId == 0xFFFFFFFFu) target->paramId = pi.id;
+            }
+            units->release();
+        }
     }
     t.controllerMs = nowMs() - t0;
 
@@ -813,6 +846,95 @@ bool Plugin::setState(const std::string& comp, const std::string& ctrl, std::str
     s1->release();
     if (!ok) err = "IComponent::setState failed";
     return ok;
+}
+
+// ---- .vstpreset: 48-byte header ("VST3", version, 32-char class id, chunk-list offset), the
+// chunks ("Comp" component state, "Cont" controller state, "Info" XML), then the chunk list
+// ("List", count, {id, offset, size}). Steinberg's "VST 3 Preset File Format".
+
+static bool readWholeFile(const std::wstring& path, std::string& out, std::string& err) {
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE) { err = "cannot open " + utf8(path); return false; }
+    LARGE_INTEGER sz{};
+    GetFileSizeEx(h, &sz);
+    out.resize((size_t)sz.QuadPart);
+    DWORD got = 0;
+    const bool ok = out.empty() || (ReadFile(h, out.data(), (DWORD)out.size(), &got, nullptr) && got == out.size());
+    CloseHandle(h);
+    if (!ok) err = "cannot read " + utf8(path);
+    return ok;
+}
+
+static bool writeWholeFile(const std::wstring& path, const std::string& data, std::string& err) {
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) { err = "cannot create " + utf8(path); return false; }
+    DWORD put = 0;
+    const bool ok = WriteFile(h, data.data(), (DWORD)data.size(), &put, nullptr) && put == data.size();
+    CloseHandle(h);
+    if (!ok) err = "cannot write " + utf8(path);
+    return ok;
+}
+
+bool Plugin::loadVstPreset(const std::wstring& path, std::string& err) {
+    std::string f;
+    if (!readWholeFile(path, f, err)) return false;
+    if (f.size() < 48 || f.compare(0, 4, "VST3") != 0) { err = "not a .vstpreset file"; return false; }
+    std::string classId = f.substr(8, 32);
+    std::string mine = cid;
+    for (auto& c : classId) c = (char)toupper((unsigned char)c);
+    for (auto& c : mine) c = (char)toupper((unsigned char)c);
+    if (!mine.empty() && classId != mine) { err = "preset is for another plugin (class " + classId + ")"; return false; }
+    int64_t listOff = 0;
+    memcpy(&listOff, f.data() + 40, 8);
+    if (listOff < 48 || (size_t)listOff + 8 > f.size() || f.compare((size_t)listOff, 4, "List") != 0) { err = "damaged preset (chunk list)"; return false; }
+    int32_t count = 0;
+    memcpy(&count, f.data() + listOff + 4, 4);
+    std::string comp, cont;
+    for (int32_t i = 0; i < count; ++i) {
+        const size_t e = (size_t)listOff + 8 + (size_t)i * 20;
+        if (e + 20 > f.size()) break;
+        int64_t off = 0, size = 0;
+        memcpy(&off, f.data() + e + 4, 8);
+        memcpy(&size, f.data() + e + 12, 8);
+        if (off < 0 || size < 0 || (size_t)off + (size_t)size > f.size()) continue;
+        const std::string id = f.substr(e, 4);
+        if (id == "Comp") comp = f.substr((size_t)off, (size_t)size);
+        else if (id == "Cont") cont = f.substr((size_t)off, (size_t)size);
+    }
+    if (comp.empty()) { err = "preset has no component state"; return false; }
+    return setState(comp, cont, err);
+}
+
+bool Plugin::saveVstPreset(const std::wstring& path, std::string& err) {
+    std::string comp, cont;
+    if (!getState(comp, cont)) { err = "could not read the plugin state"; return false; }
+    std::string f = "VST3";
+    const int32_t version = 1;
+    f.append((const char*)&version, 4);
+    std::string classId = cid;
+    classId.resize(32, '0');
+    f += classId;
+    f.append(8, '\0');  // chunk-list offset, patched below
+    struct Entry { const char* id; int64_t off, size; };
+    std::vector<Entry> entries;
+    auto chunk = [&](const char* id, const std::string& data) {
+        if (data.empty() && std::string(id) != "Info") return;
+        entries.push_back({id, (int64_t)f.size(), (int64_t)data.size()});
+        f += data;
+    };
+    chunk("Comp", comp);
+    chunk("Cont", cont);
+    chunk("Info", "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<MetaInfo>\n  <Attribute id=\"MediaType\" value=\"VstPreset\" type=\"string\" flags=\"writeProtected\"/>\n"
+                  "  <Attribute id=\"PlugInCategory\" value=\"" + subCategories + "\" type=\"string\" flags=\"writeProtected\"/>\n"
+                  "  <Attribute id=\"PlugInName\" value=\"" + name + "\" type=\"string\" flags=\"writeProtected\"/>\n"
+                  "  <Attribute id=\"PlugInVendor\" value=\"" + vendor + "\" type=\"string\" flags=\"writeProtected\"/>\n</MetaInfo>\n");
+    const int64_t listOff = (int64_t)f.size();
+    f += "List";
+    const int32_t count = (int32_t)entries.size();
+    f.append((const char*)&count, 4);
+    for (const auto& e : entries) { f.append(e.id, 4); f.append((const char*)&e.off, 8); f.append((const char*)&e.size, 8); }
+    memcpy(f.data() + 40, &listOff, 8);
+    return writeWholeFile(path, f, err);
 }
 
 }  // namespace vg

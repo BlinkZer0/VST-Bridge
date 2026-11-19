@@ -28,6 +28,15 @@ struct BusDesc {
     bool defaultActive;
 };
 
+// A VST3 program list (IUnitInfo): the plugin's factory programs, selected through the
+// "program change" parameter `paramId` (index / (count - 1), normalized).
+struct ProgramList {
+    int32_t id;
+    std::string name;
+    uint32_t paramId;  // 0xFFFFFFFF when the plugin exposes no program-change parameter
+    std::vector<std::string> programs;
+};
+
 struct LoadTimings {
     double loadLibraryMs = 0, factoryMs = 0, componentMs = 0, controllerMs = 0, setupMs = 0;
 };
@@ -77,6 +86,7 @@ public:
     bool isInstrument = false, separateController = false, hasMidiMapping = false;
     std::vector<BusDesc> audioIn, audioOut, eventIn;
     std::vector<ParamDesc> params;
+    std::vector<ProgramList> programLists;
 
     // Offline render = begin + process per block + end.
     bool render(const RenderSettings& s, RenderStats& st, std::string& err);
@@ -96,6 +106,9 @@ public:
     std::string paramText(uint32_t id, double normalized);
     bool getState(std::string& component, std::string& controller);
     bool setState(const std::string& component, const std::string& controller, std::string& err);
+    // Steinberg .vstpreset files (the format every VST3 host and plugin exchanges presets in).
+    bool loadVstPreset(const std::wstring& path, std::string& err);
+    bool saveVstPreset(const std::wstring& path, std::string& err);
 
     // ---- Editor (Phase 4, main thread). hwnd: parent window to embed into.
     bool openEditor(void* hwnd, int& width, int& height, bool& resizable, std::string& err);
