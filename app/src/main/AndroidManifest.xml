@@ -7,6 +7,11 @@
          READ_EXTERNAL_STORAGE on Android 10-12). -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- Background playing: a media-playback foreground service while a plugin is loaded. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:name=".VstGhostApp"
@@ -53,6 +58,12 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop" />
+
+        <!-- Keeps the engine alive in the background while a plugin is loaded (notification with Stop). -->
+        <service
+            android:name=".PlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- Phase 3: the bridge slots as AAP plugins (service implementation from the AAP library). -->
         <service

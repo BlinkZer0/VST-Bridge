@@ -22,6 +22,13 @@ class Bridge private constructor(context: Context, val slot: Int) {
             instances[slot] ?: Bridge(context.applicationContext, slot).also { instances[slot] = it }
         }
 
+        /** Slots whose bridge has a plugin loaded and running (this process's view). */
+        fun activeSlots(): List<Int> = synchronized(instances) {
+            instances.withIndex().filter { (_, b) -> b != null && b.plugin != null && b.isRunning }.map { it.index }
+        }
+        fun allSlots(): IntRange = 0 until NativeEngine.SLOTS
+        fun stopAll() { for (b in synchronized(instances) { instances.filterNotNull() }) if (b.plugin != null) b.stop() }
+
         /** One persistent Wine session for all hosts (saves ~1 s per load). */
         @Volatile private var sessionStarted = false
         fun ensureSession(payload: Payload) {
@@ -117,6 +124,7 @@ class Bridge private constructor(context: Context, val slot: Int) {
                     // Instrument or effect: decides the slot's place in the engine's routing.
                     isInstrument = request("info")?.let { runCatching { JSONObject(it).optBoolean("instrument", true) }.getOrNull() } ?: true
                     NativeEngine.setSlotKind(slot, if (isInstrument) 0 else 1)
+                    PlaybackService.update(appContext)
                     return LoadResult(true, "running", lastLoadMs)
                 }
                 NativeEngine.HOST_FAILED -> return LoadResult(false, NativeEngine.lastResponse(slot) ?: "host failed", 0)
@@ -141,10 +149,16 @@ class Bridge private constructor(context: Context, val slot: Int) {
         isInstrument = info.optBoolean("instrument", true)
         NativeEngine.setSlotKind(slot, if (isInstrument) 0 else 1)
         lastLoadMs = SystemClock.elapsedRealtime() - t0
+        PlaybackService.update(appContext)
         return LoadResult(true, "running (native)", lastLoadMs)
     }
 
     fun stop() {
+        stopInner()
+        PlaybackService.update(appContext)
+    }
+
+    private fun stopInner() {
         plugin = null  // (load() sets it again after stopping the previous plugin)
         if (isNativeLoaded) {
             isNativeLoaded = false

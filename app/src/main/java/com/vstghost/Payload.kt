@@ -40,6 +40,9 @@ class Payload(private val context: Context) {
     }
 
     val isPlay: Boolean = BuildConfig.EDITION == "play"
+    /** Prefix folders that survive a payload reinstall (plugin settings, user presets, installer output). */
+    private val KEEP_IN_PREFIX = listOf("prefix/drive_c/users", "prefix/drive_c/ProgramData",
+        "prefix/drive_c/Program Files/Common Files/VST3", "prefix/drive_c/Program Files/Common Files/VST3 Presets")
     val root = File(context.filesDir, "rootfs")
     private val shimDir = File(context.filesDir, "plibs")
     private val nativeLibDir = File(context.applicationInfo.nativeLibraryDir)
@@ -118,6 +121,14 @@ class Payload(private val context: Context) {
             // instead of trusting a half-deleted rootfs.
             File(root, ".installed").delete()
             File(root, ".installed-source").delete()
+            // What plugins wrote into the old prefix (user folder, ProgramData, the common VST3
+            // folder installers use) is moved aside and merged back into the fresh prefix below.
+            val keep = File(context.filesDir, "prefix-keep")
+            deleteTree(keep)
+            for ((i, rel) in KEEP_IN_PREFIX.withIndex()) {
+                val d = File(root, rel)
+                if (d.isDirectory) { File(keep, "$i").parentFile?.mkdirs(); d.renameTo(File(keep, "$i")) }
+            }
             // A Wine process may still be writing in the old tree (prefix, tmp): try twice.
             if (runCatching { deleteTree(root) }.isFailure) {
                 Thread.sleep(500)
@@ -128,6 +139,11 @@ class Payload(private val context: Context) {
             if (!staging.renameTo(root)) return InstallResult(false, "rename ${staging} -> $root failed", res, src.label, src.length)
             File(root, "tmp").mkdirs()
             File(root, "home").mkdirs()
+            for ((i, rel) in KEEP_IN_PREFIX.withIndex()) {
+                val d = File(keep, "$i")
+                if (d.isDirectory) mergeMove(d, File(root, rel))
+            }
+            deleteTree(keep)
             val version = File(root, "VERSION").takeIf { it.isFile }?.readText()?.trim() ?: "unknown"
             File(root, ".installed").writeText(version)
             sourceStamp()?.let { File(root, ".installed-source").writeText(it) }
@@ -271,6 +287,18 @@ class Payload(private val context: Context) {
         appendLine("nativeLibraryDir: $nativeLibDir")
         appendLine("installed payload: ${installedVersion ?: "none"}")
     }
+}
+
+/** Moves everything under [from] into [to], file by file, replacing what is there; symlinks move as links. */
+private fun mergeMove(from: File, to: File) {
+    to.mkdirs()
+    for (f in from.listFiles().orEmpty()) {
+        val t = File(to, f.name)
+        val isLink = java.nio.file.Files.isSymbolicLink(f.toPath())
+        if (f.isDirectory && !isLink) mergeMove(f, t)
+        else { if (t.exists() || java.nio.file.Files.isSymbolicLink(t.toPath())) deleteTree(t); f.renameTo(t) }
+    }
+    from.delete()
 }
 
 /** Recursive delete that never follows symlinks (the Wine prefix has z: -> /). */

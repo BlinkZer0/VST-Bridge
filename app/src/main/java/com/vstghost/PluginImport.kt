@@ -131,7 +131,7 @@ class PluginImport(private val ctx: Context) {
                         n.endsWith(".vst3") -> Candidate(f, label, true, if (f.isDirectory) "VST3 bundle" else "VST3")
                         n.endsWith(".zip") && f.isFile && f.length() < 600L shl 20 -> Candidate(f, label, true, "zip")
                         n.endsWith(".7z") && f.isFile -> Candidate(f, label, false, "7z archive: unpack it first")
-                        (n.endsWith(".exe") || n.endsWith(".msi")) && f.isFile -> Candidate(f, label, false, "installer: not supported yet")
+                        (n.endsWith(".exe") || n.endsWith(".msi")) && f.isFile -> Candidate(f, label, true, "installer: runs under Wine")
                         else -> null
                     } ?: return@forEach
                     add(c)
@@ -140,10 +140,11 @@ class PluginImport(private val ctx: Context) {
         return out.sortedWith(compareBy({ !it.installable }, { it.where }, { it.file.name.lowercase() }))
     }
 
-    /** Imports a file found by [scanCommonFolders]. */
-    fun importFile(f: File): Result {
+    /** Imports a file found by [scanCommonFolders]; [status] gets progress text for slow steps. */
+    fun importFile(f: File, status: (String) -> Unit = {}): Result {
         val lower = f.name.lowercase()
         return when {
+            lower.endsWith(".exe") || lower.endsWith(".msi") -> runInstaller(f, status)
             lower.endsWith(".zip") -> f.inputStream().use { importZip(it) }
             lower.endsWith(".vst3") && f.isDirectory -> {
                 val dst = File(pluginDir, safeName(f.name))
@@ -158,6 +159,79 @@ class PluginImport(private val ctx: Context) {
             }
             else -> Result(emptyList(), "${f.name}: only .vst3 and .zip can be installed")
         }
+    }
+
+    // ---- Installers (.exe / .msi): run silently under Wine, then collect the plugins they installed
+
+    /** "inno", "nsis", "msi", "exe" (unknown kind) or null for a file that is not an installer. */
+    private fun installerKind(f: File): String? {
+        val n = f.name.lowercase()
+        if (n.endsWith(".msi")) return "msi"
+        if (!n.endsWith(".exe")) return null
+        val head = f.inputStream().use { s ->
+            val b = ByteArray(minOf(f.length(), 8_000_000L).toInt()); var o = 0
+            while (o < b.size) { val r = s.read(b, o, b.size - o); if (r < 0) break; o += r }
+            String(b, 0, o, Charsets.ISO_8859_1)
+        }
+        return when { "Inno Setup" in head -> "inno"; "Nullsoft" in head -> "nsis"; else -> "exe" }
+    }
+
+    /**
+     * Runs a plugin installer unattended in the Wine prefix (Inno Setup: /VERYSILENT, NSIS: /S,
+     * MSI: msiexec /qn) and moves the .vst3 bundles it left in Common Files\VST3 into files/plugins.
+     * Data the installer puts elsewhere in the prefix (ProgramData, the user folder) stays there,
+     * where the plugin looks for it; the prefix keeps those folders across app updates.
+     * An installer that insists on a window never finishes: it is killed after 10 minutes.
+     */
+    fun runInstaller(f: File, status: (String) -> Unit): Result {
+        val kind = installerKind(f) ?: return Result(emptyList(), "${f.name}: not an installer")
+        val payload = Payload(ctx)
+        Bridge.ensureSession(payload)
+        val tmp = File(payload.root, "tmp").apply { mkdirs() }
+        val exe = File(tmp, "installer." + f.extension.lowercase())
+        f.copyTo(exe, overwrite = true)
+        val winExe = "Z:" + exe.path.replace('/', '\\')
+        val vst3Dir = File(payload.root, "prefix/drive_c/Program Files/Common Files/VST3").apply { mkdirs() }
+        val before = vst3Dir.listFiles()?.map { it.name }?.toSet().orEmpty()
+        val args = when (kind) {
+            "msi" -> listOf("msiexec", "/i", winExe, "/qn", "/norestart")
+            "inno" -> listOf(winExe, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/NOCANCEL")
+            "nsis" -> listOf(winExe, "/S")
+            else -> listOf(winExe, "/S", "/VERYSILENT", "/quiet")   // the usual flags; a GUI-only installer times out
+        }
+        status("Running ${f.name} under Wine ($kind, unattended)… this can take a few minutes.")
+        val cmd = payload.box64Command() + listOf("${payload.root}/wine/bin/wine") + args
+        val pb = ProcessBuilder(cmd).directory(payload.root).redirectErrorStream(true)
+        pb.environment().remove("LD_PRELOAD")
+        pb.environment().putAll(payload.environment(mapOf(
+            "WINEDEBUG" to "-all,err+module", "WINEDLLOVERRIDES" to "mscoree=d;mshtml=d;winemenubuilder.exe=d")))
+        val p = pb.start()
+        val tail = ArrayDeque<String>()
+        Thread { p.inputStream.bufferedReader().forEachLine { synchronized(tail) { tail.addLast(it); while (tail.size > 20) tail.removeFirst() } } }
+            .apply { isDaemon = true; start() }
+        val finished = p.waitFor(10, java.util.concurrent.TimeUnit.MINUTES)
+        exe.delete()
+        if (!finished) {
+            p.destroyForcibly()
+            return Result(emptyList(), "${f.name}: the installer did not finish in 10 minutes (it probably needs a window, which is not supported)")
+        }
+        val fresh = vst3Dir.listFiles().orEmpty().filter { it.name !in before && it.name.lowercase().endsWith(".vst3") }
+        if (fresh.isEmpty()) {
+            val log = synchronized(tail) { tail.joinToString(" | ") }.take(300)
+            return Result(emptyList(), "${f.name}: the installer finished (exit ${p.exitValue()}) but left no .vst3 in Common Files\\VST3" +
+                if (log.isNotEmpty()) " · $log" else "")
+        }
+        val names = mutableListOf<String>()
+        for (src in fresh) {
+            val dst = File(pluginDir, safeName(src.name))
+            dst.deleteRecursively()
+            if (!src.renameTo(dst)) {
+                if (src.isDirectory) src.copyRecursively(dst, overwrite = true) else src.copyTo(dst, overwrite = true)
+                src.deleteRecursively()
+            }
+            names += dst.name.removeSuffix(".vst3")
+        }
+        return Result(names, "Installed ${names.joinToString()} from ${f.name}")
     }
 
     private fun displayName(uri: Uri): String? = queryName(uri) ?: uri.lastPathSegment?.substringAfterLast('/')

@@ -76,6 +76,22 @@ class PlayerActivity : AppCompatActivity() {
     private val slotBtns = HashMap<Int, MaterialButton>()
 
     private var plugins: List<File> = emptyList()
+    private val slotBars = HashMap<Int, MeterBar>()
+    /** The one reader of the engine's peak meters (they reset on read): feeds the slot cards and the mixer. */
+    private var mixerSink: ((Map<Int, Float>) -> Unit)? = null
+    private val meterTick = object : Runnable {
+        override fun run() {
+            val peaks = HashMap<Int, Float>()
+            for (s in INST_SLOTS + FX_SLOTS) {
+                val p = NativeEngine.slotMeter(s)
+                peaks[s] = p
+                slotBars[s]?.feed(p)
+            }
+            peaks[MixerView.MASTER] = NativeEngine.masterMeter()
+            mixerSink?.invoke(peaks)
+            ui.postDelayed(this, 33)
+        }
+    }
     private var params: List<Param> = emptyList()
     private var filter = ""
     private var sustain = false
@@ -110,6 +126,11 @@ class PlayerActivity : AppCompatActivity() {
             Bridge.ensureSession(payload)
             NativeEngine.startAudio()
             applyMixerPrefs()
+            ui.post {
+                if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                    checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                    requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 7)
+            }
             setStatus("Ready. Pick a plugin, choose a slot and press Load.")
             // adb extras (below) run once. The activity is singleTask, and Android replays a dead
             // task's launch intent when the user opens the app again: without this, a test's
@@ -190,7 +211,7 @@ class PlayerActivity : AppCompatActivity() {
                     if (!c.installable) { setStatus("${c.file.name}: ${c.note}"); return@setItems }
                     setStatus("Installing ${c.file.name}…")
                     io.execute {
-                        val r = runCatching { PluginImport(this).importFile(c.file) }
+                        val r = runCatching { PluginImport(this).importFile(c.file) { msg -> ui.post { setStatus(msg) } } }
                             .getOrElse { PluginImport.Result(emptyList(), "Install failed: ${it.message}") }
                         setStatus(r.message + if (r.imported.isNotEmpty()) " · pick it in the plugin list and press Load" else "")
                         ui.post { refreshPlugins() }
@@ -236,6 +257,13 @@ class PlayerActivity : AppCompatActivity() {
         super.onResume()
         // The Tests screen points the keyboard/MIDI at slot 0 while it runs; take it back.
         if (current in INST_SLOTS) NativeEngine.playerSlot = current
+        refreshSlots()   // the notification's Stop may have unloaded everything meanwhile
+        ui.removeCallbacks(meterTick); ui.post(meterTick)
+    }
+
+    override fun onPause() {
+        ui.removeCallbacks(meterTick)
+        super.onPause()
     }
 
     override fun onDestroy() {
@@ -302,7 +330,15 @@ class PlayerActivity : AppCompatActivity() {
                     setOnLongClickListener { slotMenu(s); true }
                 }
                 slotBtns[s] = b
-                row.addView(b, LinearLayout.LayoutParams(0, dp(34), 1f).apply { leftMargin = dp(3); rightMargin = dp(3) })
+                val bar = MeterBar(this)
+                slotBars[s] = bar
+                val cell = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(b, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(34)))
+                    addView(bar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(4)).apply {
+                        leftMargin = dp(10); rightMargin = dp(10); topMargin = dp(-2); bottomMargin = dp(1) })
+                }
+                row.addView(cell, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(3); rightMargin = dp(3) })
             }
         }
         slotRow(R.id.instRow, INST_SLOTS)
@@ -422,39 +458,33 @@ class PlayerActivity : AppCompatActivity() {
     /** Faders and mutes persist across runs; the engine gets them at start and whenever they move. */
     private fun applyMixerPrefs() {
         val p = mixerPrefs
-        for (s in INST_SLOTS + FX_SLOTS) {
+        for (s in INST_SLOTS + FX_SLOTS + listOf(MixerView.MASTER)) {
             val db = p.getFloat("db$s", 0f)
             val mute = p.getBoolean("mute$s", false)
-            NativeEngine.setSlotGain(s, if (mute || db <= MixerView.MIN_DB) 0f else Math.pow(10.0, db / 20.0).toFloat())
+            val g = if (mute || db <= MixerView.MIN_DB) 0f else Math.pow(10.0, db / 20.0).toFloat()
+            if (s == MixerView.MASTER) NativeEngine.setGain(g) else NativeEngine.setSlotGain(s, g)
         }
     }
 
     /** ⋮ → Mixer: eight strips with live meters (blue → red), faders and mutes. */
     private fun showMixer() {
         val mixer = MixerView(this).apply {
-            slots = SlotManager.FIRST_INST until SlotManager.FIRST_FX + SlotManager.COUNT
-            names = { s -> slotText(s).removeSuffix(" ✗") }
+            slots = (INST_SLOTS + FX_SLOTS).toList() + MixerView.MASTER
+            names = { s -> if (s == MixerView.MASTER) "Master" else slotText(s).removeSuffix(" ✗") }
             val p = mixerPrefs
             for (s in slots) setGainDb(s, p.getFloat("db$s", 0f), p.getBoolean("mute$s", false))
             onGain = { s, g ->
-                NativeEngine.setSlotGain(s, g)
+                if (s == MixerView.MASTER) NativeEngine.setGain(g) else NativeEngine.setSlotGain(s, g)
                 mixerPrefs.edit().putFloat("db$s", gainDb(s)).putBoolean("mute$s", isMuted(s)).apply()
             }
         }
         val dialog = MaterialAlertDialogBuilder(this).setTitle("Mixer")
             .setView(mixer).setPositiveButton("Close", null).create()
-        val tick = object : Runnable {
-            override fun run() {
-                if (!dialog.isShowing) return
-                mixer.update(mixer.slots.associateWith { NativeEngine.slotMeter(it) })
-                ui.postDelayed(this, 33)
-            }
-        }
         dialog.setOnShowListener {
             dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.96f).toInt(), android.view.WindowManager.LayoutParams.WRAP_CONTENT)
-            for (s in mixer.slots) NativeEngine.slotMeter(s)   // drop what accumulated while closed
-            ui.post(tick)
+            mixerSink = { peaks -> mixer.update(peaks) }
         }
+        dialog.setOnDismissListener { mixerSink = null }
         dialog.show()
     }
 

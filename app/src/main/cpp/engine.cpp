@@ -211,7 +211,12 @@ public:
             memcpy(chainL_, l_, n * 4); memcpy(chainR_, r_, n * 4);
         }
         const float g = gain_.load(std::memory_order_relaxed);
-        for (uint32_t i = 0; i < n; ++i) { out[2 * i] = chainL_[i] * g; out[2 * i + 1] = chainR_[i] * g; }
+        float mpk = 0.0f;
+        for (uint32_t i = 0; i < n; ++i) {
+            out[2 * i] = chainL_[i] * g; out[2 * i + 1] = chainR_[i] * g;
+            mpk = std::max(mpk, std::max(std::fabs(out[2 * i]), std::fabs(out[2 * i + 1])));
+        }
+        masterMeter_.store(std::max(masterMeter_.load(std::memory_order_relaxed), mpk), std::memory_order_relaxed);
         for (int32_t i = (int32_t)n; i < frames; ++i) out[2 * i] = out[2 * i + 1] = 0;
         const int64_t dt = nowNs() - t0;
         cbCount_.fetch_add(1, std::memory_order_relaxed);
@@ -287,6 +292,7 @@ public:
     }
 
     std::atomic<float> gain_{1.0f};
+    std::atomic<float> masterMeter_{0.0f};  // output peak since the mixer last read it
     int sampleRate() const { return sampleRate_; }
 
 private:
@@ -404,6 +410,7 @@ JNIFN(void, setGain)(JNIEnv*, jclass, jfloat g) { engine().gain_ = g; }
 JNIFN(void, setSlotGain)(JNIEnv*, jclass, jint slot, jfloat g) { if (okSlot(slot)) engine().slots[slot].gain = g; }
 // The slot's output peak since the previous call (the mixer polls this at its frame rate).
 JNIFN(jfloat, slotMeter)(JNIEnv*, jclass, jint slot) { return okSlot(slot) ? engine().slots[slot].meter.exchange(0.0f) : 0.0f; }
+JNIFN(jfloat, masterMeter)(JNIEnv*, jclass) { return engine().masterMeter_.exchange(0.0f); }
 JNIFN(void, setAapOwned)(JNIEnv*, jclass, jint slot, jboolean owned) { setSlotAapOwned(slot, owned); }
 
 JNIFN(void, startProbe)(JNIEnv*, jclass, jint slot, jint note, jint vel, jfloat thresholdDb) {
