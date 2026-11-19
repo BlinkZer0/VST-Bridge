@@ -80,6 +80,7 @@ class PlayerActivity : Activity() {
     private var fillBlocks = 2
     private val lastStates = HashMap<Int, JSONObject>()
     private var fxTestSignal = false
+    private var selftestOnce = false
 
     data class Param(val id: Long, val title: String, val units: String, val steps: Int, var value: Double, var text: String)
 
@@ -106,11 +107,21 @@ class PlayerActivity : Activity() {
             Bridge.ensureSession(payload)
             NativeEngine.startAudio()
             setStatus("Ready. Pick a plugin, choose a slot and press Load.")
+            // adb extras (below) run once. The activity is singleTask, and Android replays a dead
+            // task's launch intent when the user opens the app again: without this, a test's
+            // `--es load X --ez selftest true` kept loading X and playing its chord at every start.
+            val adb = intent?.extras?.let { b -> b.keySet().sorted().joinToString("|") { "$it=${b.get(it)}" } }.orEmpty()
+            val prefs = getSharedPreferences("player", MODE_PRIVATE)
+            val replay = adb.isNotEmpty() && prefs.getString("lastAdbIntent", "") == adb
+            if (adb.isNotEmpty() && !replay) prefs.edit().putString("lastAdbIntent", adb).apply()
+            val intent = if (replay) null else intent
             // adb: am start -n <pkg>/com.vstghost.PlayerActivity --es assign "1=E-Piano;5=Pedal Faster"
+            // (to repeat an identical command, add a changing extra such as --el t <seconds>)
             intent?.getStringExtra("assign")?.split(";")?.forEach { kv ->
                 val (k, v) = kv.split("=", limit = 2).let { it[0].trim() to it.getOrNull(1)?.trim() }
                 k.toIntOrNull()?.takeIf { it in 1..8 }?.let { SlotManager.assign(it, v?.ifEmpty { null }) }
             }
+            selftestOnce = intent?.getBooleanExtra("selftest", false) == true
             // adb: --es importZip <name.zip in Android/data/<pkg>/files>  (same importer as the Add button)
             intent?.getStringExtra("importZip")?.let { z ->
                 val f = File(getExternalFilesDir(null), z)
@@ -123,9 +134,8 @@ class PlayerActivity : Activity() {
             intent?.getStringExtra("load")?.let { name ->
                 ui.post {
                     // name: a bridged VST's name, or a native library ("vgn_epianovst")
-                    val i = plugins.indexOfFirst { it.nameWithoutExtension == name }
                     intent?.getIntExtra("slot", 0)?.takeIf { it in 1..8 }?.let { selectSlot(it) }
-                    if (i >= 0) { pluginSpinner.setSelection(i); loadSelected() }
+                    loadByName(name)
                 }
             }
         }
@@ -169,10 +179,7 @@ class PlayerActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         intent.getIntExtra("slot", 0).takeIf { it in 1..8 }?.let { selectSlot(it) }
-        intent.getStringExtra("load")?.let { name ->
-            val i = plugins.indexOfFirst { it.nameWithoutExtension == name }
-            if (i >= 0) { pluginSpinner.setSelection(i); loadSelected() }
-        }
+        intent.getStringExtra("load")?.let { loadByName(it) }
         intent.getStringExtra("req")?.let { r ->
             val slot = current
             io.execute { android.util.Log.i(TAG, "req slot $slot ${r.lineSequence().first()}: ${Bridge.get(this, slot).request(r.replace("\\n", "\n"))}") }
@@ -426,6 +433,17 @@ class PlayerActivity : Activity() {
         load(current, f, null)
     }
 
+    /** adb `--es load <name>`: by file name, not through the spinner (its selection updates asynchronously). */
+    private fun loadByName(name: String) {
+        val i = plugins.indexOfFirst { it.nameWithoutExtension == name }
+        if (i < 0) { setStatus("No plugin named \"$name\"."); return }
+        pluginSpinner.setSelection(i)
+        keyboard.allOff()
+        restartBtn.visibility = View.GONE
+        lastStates.remove(current)
+        load(current, plugins[i], null)
+    }
+
     private fun load(slot: Int, f: File, state: JSONObject?) {
         setStatus("Loading ${NativePlugins.displayName(f)} into ${slotName(slot)}…")
         io.execute {
@@ -454,7 +472,8 @@ class PlayerActivity : Activity() {
                       "Editor opens the plugin's own window")
             captureState(slot)
             // adb: --ez selftest true  -> play a chord through the normal MIDI path and log the output peak
-            if (intent?.getBooleanExtra("selftest", false) == true) {
+            if (selftestOnce) {
+                selftestOnce = false
                 NativeEngine.resetStats(slot)
                 if (instrument) for (k in intArrayOf(60, 64, 67)) NativeEngine.sendMidi(slot, 0x90, k, 100)
                 Thread.sleep(1500)

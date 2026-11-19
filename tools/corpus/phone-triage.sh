@@ -24,11 +24,11 @@ for p in "${PLUGS[@]}"; do
     (cd "$(dirname "$p")" && "$PY" -m zipfile -c "$z" "$(basename "$p")")
     "$ADB" push "$z" "/sdcard/Android/data/$PKG/files/$s.zip" >/dev/null
     "$ADB" shell am force-stop "$PKG"; sleep 2; "$ADB" logcat -c
-    "$ADB" shell am start -n "$PKG/.PlayerActivity" --es importZip "$s.zip" >/dev/null 2>&1
+    "$ADB" shell am start -n "$PKG/.PlayerActivity" --es importZip "$s.zip" --el t "$(date +%s)" >/dev/null 2>&1
     sleep 25
     imp=$("$ADB" logcat -d -s VSTGHOST:* | grep -o "import $s.zip: .*" | head -1 | cut -c1-80)
     "$ADB" shell am force-stop "$PKG"; sleep 2; "$ADB" logcat -c
-    "$ADB" shell am start -n "$PKG/.PlayerActivity" --es load "'$n'" --ez selftest true >/dev/null 2>&1
+    "$ADB" shell am start -n "$PKG/.PlayerActivity" --es load "'$n'" --ez selftest true --el t "$(date +%s)" >/dev/null 2>&1
     sleep "${LOAD_WAIT:-45}"
     st=$("$ADB" logcat -d -s VSTGHOST:* | grep -o "selftest .*" | head -1)
     crash=$("$ADB" logcat -d -s VSTGHOST:* | grep -c "exited unexpectedly")
@@ -38,7 +38,7 @@ for p in "${PLUGS[@]}"; do
     ur=$(echo "$st" | grep -oE "underruns [0-9]+" | cut -d' ' -f2)
     load=$([ -n "$st" ] && echo ok || { [ "$crash" -gt 0 ] && echo CRASH || echo "FAIL"; })
     # instrument/params from the "programs"/"info" request hook
-    "$ADB" logcat -c; "$ADB" shell am start -n "$PKG/.PlayerActivity" --es req info >/dev/null 2>&1; sleep 4
+    "$ADB" logcat -c; "$ADB" shell am start -n "$PKG/.PlayerActivity" --es req info --el t "$(date +%s)" >/dev/null 2>&1; sleep 4
     info=$("$ADB" logcat -d -s VSTGHOST:* | grep -o "req slot 1 info: .*" | sed 's/.*info: //')
     inst=$(echo "$info" | "$PY" -c 'import sys,json
 try: d=json.loads(sys.stdin.read()); print(str(d.get("instrument","?")).lower(), d.get("paramCount","?"))

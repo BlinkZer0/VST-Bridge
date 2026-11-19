@@ -33,12 +33,19 @@ Over adb (zip already on the phone):
    selector (a web UI) works. Close and reopen: the editor opens again.
 3. `--es selftest 1` on the player runs the virtual-MIDI self test with native slots (expect PASS).
 
+adb extras run once: the player is `singleTask`, and Android replays a dead task's launch intent on
+the next start, so an identical command is ignored — add a changing extra (`--el t <seconds>`) to
+repeat one. While the app runs, `--ei slot N`, `--es load <name>` and `--es req "cmd\narg"` (a
+request to the selected slot, answer in logcat) are delivered to the running player. The player's
+slots are Inst 1–4 (engine slots 1–4) and FX 1–4 (5–8); `--es load` goes to the selected slot
+(Inst 1 at start), so editor dumps use `--ei slot 1`.
+
 ## Bridged editors (automated, works with the screen locked)
 
 ```powershell
 & $adb shell am start -n com.vstghost/com.vstghost.PlayerActivity --es load Dexed
 Start-Sleep 35
-& $adb shell "am start -n com.vstghost/com.vstghost.EditorActivity --ei slot 0 --ei dump 5 --es taps '420,560/150,140'"
+& $adb shell "am start -n com.vstghost/com.vstghost.EditorActivity --ei slot 1 --ei dump 5 --es taps '420,560/150,140'"
 Start-Sleep 60
 & $adb logcat -d -s VSTGHOST:* | Select-String "editor_open|editor dump|tap|underruns"
 cmd /c "`"$adb`" exec-out run-as com.vstghost cat files/editor-dump-4.bmp > dexed.bmp"
