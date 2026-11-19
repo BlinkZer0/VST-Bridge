@@ -22,6 +22,7 @@ OUT="${OUT:-$C/results}"
 mkdir -p "$OUT"
 export WINEPREFIX="${PREFIX:-$C/prefix}"
 [ -d "$WINEPREFIX" ] || cp -a "$W/stage/prefix" "$WINEPREFIX"
+ln -sfn "$C/x" "$WINEPREFIX/dosdevices/d:"  # like the app: plugins live on D: (the host maps paths under VSTGHOST_PLUGIN_DIR)
 RUN="$C/run"; mkdir -p "$RUN"; chmod 700 "$RUN"
 export USER=vstghost WINEDEBUG=-all XDG_RUNTIME_DIR="$RUN" WAYLAND_DISPLAY="$RUN/vgwl-0" VSTGHOST_WL_ONE_TOPLEVEL=1
 export WINEDLLOVERRIDES="mscoree=d;mshtml=d;winemenubuilder.exe=d"
@@ -53,10 +54,13 @@ for p in "${PLUGS[@]}"; do
     rt=$(echo "$r" | json 'round(d.get("realtimeFactor", d.get("rtFactor",0)),1)')
     render=$([ $rrc = 0 ] && echo ok || echo "FAIL($rrc)")
     rm -f "$OUT/$s.wav"
-    # editor through our compositor: a screenshot at 20 s
-    "$VGWL" "$RUN/vgwl-0" 26 "$OUT" "shot:20:$s.ed" > "$OUT/$s.vgwl.json" 2>/dev/null &
+    # editor through our compositor: a screenshot at 20 s. The compositor must be listening before
+    # the Wine session starts (the session picks its display driver once).
+    "$WX/bin/wineserver" -k 2>/dev/null; sleep 1
+    "$VGWL" "$RUN/vgwl-0" 30 "$OUT" "shot:22:$s.ed" > "$OUT/$s.vgwl.json" 2>/dev/null &
     VP=$!; sleep 0.5
-    e=$(timeout 90 "$WX/bin/wine" "$H" editor "$p" --seconds 22 2>"$OUT/$s.editor.err" | tail -1)
+    "$WX/bin/wineserver" -p
+    e=$(timeout 90 "$WX/bin/wine" "$H" editor "$p" --seconds 24 2>"$OUT/$s.editor.err" | tail -1)
     wait $VP
     ed=$(echo "$e" | json '"ok" if d.get("ok") else "FAIL:"+d.get("error","")[:40].replace(" ","_")' "FAIL(no-output)")
     ms=$(echo "$e" | json 'round(d.get("openMs",0))' 0)
