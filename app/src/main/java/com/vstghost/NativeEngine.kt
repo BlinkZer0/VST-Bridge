@@ -20,6 +20,9 @@ object NativeEngine {
     @JvmStatic external fun stopAudio()
     @JvmStatic external fun setBufferBursts(n: Int)
     @JvmStatic external fun setGain(gain: Float)
+    /** Mixer: the slot's fader (linear gain) and its output peak since the last call. */
+    @JvmStatic external fun setSlotGain(slot: Int, gain: Float)
+    @JvmStatic external fun slotMeter(slot: Int): Float
 
     /** Creates the slot's shared-memory file. rate 0 = the Oboe stream's rate. Null on success. */
     @JvmStatic external fun createBridge(slot: Int, path: String, rate: Int, block: Int, fillFrames: Int): String?

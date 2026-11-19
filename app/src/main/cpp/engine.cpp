@@ -74,6 +74,8 @@ struct Slot {
     std::atomic<int> inputMode{0};  // effects: 0 the FX chain (see onAudioReady), 1 the test signal
     std::atomic<int> kind{0};       // 0 instrument, 1 effect (bridged plugins: set by Bridge.load)
     std::atomic<float> peak{0.0f};  // output peak since the last stats reset (app-mixed slots)
+    std::atomic<float> gain{1.0f};  // mixer fader (linear), applied to the slot's output
+    std::atomic<float> meter{0.0f}; // output peak since the mixer last read it (after the fader)
     // Adaptive fill state (touched only by the slot's current consumer thread).
     uint64_t lastUnderruns = 0;
     uint32_t growth = 0;
@@ -155,10 +157,16 @@ public:
         auto isEffect = [&](Slot& sl, const std::shared_ptr<NativeInstance>& nat) {
             return nat ? !nat->instrument() : sl.kind.load(std::memory_order_relaxed) == 1;
         };
+        // The slot's fader, then its peaks: `peak` for the self-test, `meter` for the mixer.
         auto addPeak = [&](Slot& sl) {
-            float pk = sl.peak.load(std::memory_order_relaxed);
-            for (uint32_t k = 0; k < n; ++k) pk = std::max(pk, std::fabs(l_[k]));
-            sl.peak.store(pk, std::memory_order_relaxed);
+            const float g = sl.gain.load(std::memory_order_relaxed);
+            float pk = 0.0f;
+            for (uint32_t k = 0; k < n; ++k) {
+                l_[k] *= g; r_[k] *= g;
+                pk = std::max(pk, std::max(std::fabs(l_[k]), std::fabs(r_[k])));
+            }
+            sl.peak.store(std::max(sl.peak.load(std::memory_order_relaxed), pk), std::memory_order_relaxed);
+            sl.meter.store(std::max(sl.meter.load(std::memory_order_relaxed), pk), std::memory_order_relaxed);
         };
         // Pass 1: instruments onto the bus (mixL_/mixR_).
         for (int i = 0; i < kSlots; ++i) {
@@ -175,8 +183,8 @@ public:
                 b->read(l_, r_, n);
                 b->wakeHost();
             }
-            for (uint32_t k = 0; k < n; ++k) { mixL_[k] += l_[k]; mixR_[k] += r_[k]; }
             addPeak(sl);
+            for (uint32_t k = 0; k < n; ++k) { mixL_[k] += l_[k]; mixR_[k] += r_[k]; }
         }
         // Pass 2: the effect chain. chainL_/chainR_ carry the signal from stage to stage.
         if (fxSource_.load(std::memory_order_relaxed) == 1) { testSignal(); memcpy(chainL_, inL_, n * 4); memcpy(chainR_, inR_, n * 4); }
@@ -199,8 +207,8 @@ public:
                 b->read(l_, r_, n);
                 b->wakeHost();
             }
-            memcpy(chainL_, l_, n * 4); memcpy(chainR_, r_, n * 4);
             addPeak(sl);
+            memcpy(chainL_, l_, n * 4); memcpy(chainR_, r_, n * 4);
         }
         const float g = gain_.load(std::memory_order_relaxed);
         for (uint32_t i = 0; i < n; ++i) { out[2 * i] = chainL_[i] * g; out[2 * i + 1] = chainR_[i] * g; }
@@ -393,6 +401,9 @@ JNIFN(void, setInputMode)(JNIEnv*, jclass, jint slot, jint mode) { if (okSlot(sl
 JNIFN(void, setSlotKind)(JNIEnv*, jclass, jint slot, jint kind) { if (okSlot(slot)) engine().slots[slot].kind = kind; }
 JNIFN(void, setFxInput)(JNIEnv*, jclass, jint mode) { engine().fxSource_ = mode; }
 JNIFN(void, setGain)(JNIEnv*, jclass, jfloat g) { engine().gain_ = g; }
+JNIFN(void, setSlotGain)(JNIEnv*, jclass, jint slot, jfloat g) { if (okSlot(slot)) engine().slots[slot].gain = g; }
+// The slot's output peak since the previous call (the mixer polls this at its frame rate).
+JNIFN(jfloat, slotMeter)(JNIEnv*, jclass, jint slot) { return okSlot(slot) ? engine().slots[slot].meter.exchange(0.0f) : 0.0f; }
 JNIFN(void, setAapOwned)(JNIEnv*, jclass, jint slot, jboolean owned) { setSlotAapOwned(slot, owned); }
 
 JNIFN(void, startProbe)(JNIEnv*, jclass, jint slot, jint note, jint vel, jfloat thresholdDb) {

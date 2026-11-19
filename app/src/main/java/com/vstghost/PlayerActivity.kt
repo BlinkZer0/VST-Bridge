@@ -109,6 +109,7 @@ class PlayerActivity : AppCompatActivity() {
             ui.post { refreshPlugins() }
             Bridge.ensureSession(payload)
             NativeEngine.startAudio()
+            applyMixerPrefs()
             setStatus("Ready. Pick a plugin, choose a slot and press Load.")
             // adb extras (below) run once. The activity is singleTask, and Android replays a dead
             // task's launch intent when the user opens the app again: without this, a test's
@@ -278,7 +279,9 @@ class PlayerActivity : AppCompatActivity() {
         findViewById<Button>(R.id.presetsBtn).setOnClickListener { presets() }
         findViewById<Button>(R.id.moreBtn).setOnClickListener { v ->
             android.widget.PopupMenu(this, v).apply {
+                menu.add("Mixer").setOnMenuItemClickListener { showMixer(); true }
                 menu.add("Install plugin…").setOnMenuItemClickListener { installFromFolders(); true }
+                menu.add("Uninstall plugin…").setOnMenuItemClickListener { uninstallPlugin(); true }
                 menu.add("Stats").setOnMenuItemClickListener { statsPanel.visibility = if (statsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE; true }
                 menu.add("Tests").setOnMenuItemClickListener { startActivity(Intent(this@PlayerActivity, MainActivity::class.java)); true }
             }.show()
@@ -410,6 +413,80 @@ class PlayerActivity : AppCompatActivity() {
                 else -> { SlotManager.assign(s, null); refreshSlots() }
             }
         }.show()
+    }
+
+    // ------------------------------------------------------------------ mixer
+
+    private val mixerPrefs get() = getSharedPreferences("mixer", MODE_PRIVATE)
+
+    /** Faders and mutes persist across runs; the engine gets them at start and whenever they move. */
+    private fun applyMixerPrefs() {
+        val p = mixerPrefs
+        for (s in INST_SLOTS + FX_SLOTS) {
+            val db = p.getFloat("db$s", 0f)
+            val mute = p.getBoolean("mute$s", false)
+            NativeEngine.setSlotGain(s, if (mute || db <= MixerView.MIN_DB) 0f else Math.pow(10.0, db / 20.0).toFloat())
+        }
+    }
+
+    /** ⋮ → Mixer: eight strips with live meters (blue → red), faders and mutes. */
+    private fun showMixer() {
+        val mixer = MixerView(this).apply {
+            slots = SlotManager.FIRST_INST until SlotManager.FIRST_FX + SlotManager.COUNT
+            names = { s -> slotText(s).removeSuffix(" ✗") }
+            val p = mixerPrefs
+            for (s in slots) setGainDb(s, p.getFloat("db$s", 0f), p.getBoolean("mute$s", false))
+            onGain = { s, g ->
+                NativeEngine.setSlotGain(s, g)
+                mixerPrefs.edit().putFloat("db$s", gainDb(s)).putBoolean("mute$s", isMuted(s)).apply()
+            }
+        }
+        val dialog = MaterialAlertDialogBuilder(this).setTitle("Mixer")
+            .setView(mixer).setPositiveButton("Close", null).create()
+        val tick = object : Runnable {
+            override fun run() {
+                if (!dialog.isShowing) return
+                mixer.update(mixer.slots.associateWith { NativeEngine.slotMeter(it) })
+                ui.postDelayed(this, 33)
+            }
+        }
+        dialog.setOnShowListener {
+            dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.96f).toInt(), android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+            for (s in mixer.slots) NativeEngine.slotMeter(s)   // drop what accumulated while closed
+            ui.post(tick)
+        }
+        dialog.show()
+    }
+
+    // ------------------------------------------------------------------ uninstall
+
+    /** ⋮ → Uninstall plugin: removes an imported Windows plugin (native builds are part of the app). */
+    private fun uninstallPlugin() {
+        val removable = plugins.filter { !NativePlugins.isNative(it) }
+        if (removable.isEmpty()) { setStatus("No imported plugins to uninstall."); return }
+        val labels = removable.map { f ->
+            val where = (INST_SLOTS + FX_SLOTS).filter { Bridge.get(this, it).plugin?.path == f.path }
+            f.name.removeSuffix(".vst3") + if (where.isEmpty()) "" else "  (loaded in ${where.joinToString { slotName(it) }})"
+        }.toTypedArray()
+        MaterialAlertDialogBuilder(this).setTitle("Uninstall a plugin").setItems(labels) { _, which ->
+            val f = removable[which]
+            MaterialAlertDialogBuilder(this).setTitle("Uninstall ${f.name.removeSuffix(".vst3")}?")
+                .setMessage("The plugin files are deleted from VST gHost. Saved presets in files/presets are kept.")
+                .setPositiveButton("Uninstall") { _, _ ->
+                    setStatus("Uninstalling ${f.name}…")
+                    io.execute {
+                        for (s in INST_SLOTS + FX_SLOTS) {
+                            val b = Bridge.get(this, s)
+                            if (b.plugin?.path == f.path) { b.stop(); mine.remove(s); SlotManager.assign(s, null) }
+                        }
+                        val ok = f.deleteRecursively()
+                        ui.post {
+                            refreshPlugins(); refreshSlots(); selectSlot(current)
+                            setStatus(if (ok) "${f.name.removeSuffix(".vst3")} uninstalled." else "Could not delete ${f.name}.")
+                        }
+                    }
+                }.setNegativeButton("Cancel", null).show()
+        }.setNegativeButton("Cancel", null).show()
     }
 
     private fun unloadCurrent() {

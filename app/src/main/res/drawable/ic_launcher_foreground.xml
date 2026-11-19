@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- VST gHost: a ghost wearing headphones (adaptive-icon foreground; the safe zone is the
+     centred 66 dp circle of the 108 dp canvas). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- soft shadow under the ghost -->
+    <path android:fillColor="#0A000000"
+        android:pathData="M36,80 C36,76 72,76 72,80 C72,84 36,84 36,80 Z" />
+    <!-- body: domed head, straight sides, scalloped hem -->
+    <path android:fillColor="#F4F6F8"
+        android:pathData="M34,50 A20,20 0 0 1 74,50 L74,76 Q69,70 64,76 Q59,82 54,76 Q49,70 44,76 Q39,82 34,76 Z" />
+    <!-- eyes -->
+    <path android:fillColor="#15181C"
+        android:pathData="M46.5,52 m-3.3,0 a3.3,3.3 0 1 0 6.6,0 a3.3,3.3 0 1 0 -6.6,0 Z
+                          M61.5,52 m-3.3,0 a3.3,3.3 0 1 0 6.6,0 a3.3,3.3 0 1 0 -6.6,0 Z" />
+    <!-- eye highlights -->
+    <path android:fillColor="#F4F6F8"
+        android:pathData="M47.6,50.9 m-1,0 a1,1 0 1 0 2,0 a1,1 0 1 0 -2,0 Z
+                          M62.6,50.9 m-1,0 a1,1 0 1 0 2,0 a1,1 0 1 0 -2,0 Z" />
+    <!-- a small smile -->
+    <path android:strokeColor="#15181C" android:strokeWidth="1.6" android:strokeLineCap="round"
+        android:pathData="M50.5,60 Q54,63 57.5,60" />
+    <!-- headphones: band over the head, two cups on the sides -->
+    <path android:strokeColor="#F2B23A" android:strokeWidth="3.4" android:strokeLineCap="round"
+        android:pathData="M31.5,52 A22.5,22.5 0 0 1 76.5,52" />
+    <path android:fillColor="#F2B23A"
+        android:pathData="M27,46 h7 a2.5,2.5 0 0 1 2.5,2.5 v9 a2.5,2.5 0 0 1 -2.5,2.5 h-7 a2.5,2.5 0 0 1 -2.5,-2.5 v-9 a2.5,2.5 0 0 1 2.5,-2.5 Z
+                          M74,46 h7 a2.5,2.5 0 0 1 2.5,2.5 v9 a2.5,2.5 0 0 1 -2.5,2.5 h-7 a2.5,2.5 0 0 1 -2.5,-2.5 v-9 a2.5,2.5 0 0 1 2.5,-2.5 Z" />
+    <!-- cup cushions -->
+    <path android:fillColor="#5A431A"
+        android:pathData="M33,48.5 h2 v9 h-2 Z M73,48.5 h2 v9 h-2 Z" />
+</vector>
