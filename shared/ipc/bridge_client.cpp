@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 #include "bridge_client.h"
 
 #include <fcntl.h>

@@ -1,6 +1,6 @@
 /*
  * VST gHost Phase 0: trivial x86_64 Windows console program.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
  *
  * Prints what it runs on, then runs the shared DSP benchmark kernel so the app can
  * compare it with the same kernel compiled natively for arm64.

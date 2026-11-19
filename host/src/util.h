@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 // Small helpers for the bridge host: UTF conversion, JSON output, timing.
 #pragma once
 

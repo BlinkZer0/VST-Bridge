@@ -1,7 +1,7 @@
 /*
  * VST gHost: shared-memory layout between the arm64 audio engine (Android, NDK) and the
  * bridge host (x86_64 Windows exe under Wine + Box64).
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
  *
  * One file (files/ipc/<slot>.shm) is mmap'd MAP_SHARED by both processes. Positions are
  * monotonic 64-bit counters; ring index = pos & (size - 1). Single producer / single consumer

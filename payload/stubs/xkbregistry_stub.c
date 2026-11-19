@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 //
 // Stand-in for libxkbregistry.so.0 (x86_64, run under Box64). Wine's Wayland driver links it only to
 // name keyboard layouts when a compositor sends a keymap; our compositor (shared/wl) never does, and

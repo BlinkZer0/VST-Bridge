@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 //
 // vgn.h implemented on top of a JUCE AudioProcessor. Compiled into each native plugin library with
 // that plugin's JucePlugin_* definitions; the plugin's own createPluginFilter() makes the instance.
@@ -62,6 +62,36 @@ const char* vgn_info_json(void) {
     return s.c_str();
 }
 
+// ---- Modal loops on Android --------------------------------------------------------------------
+// JUCE has no "run the event loop for a while" on Android, so it forbids modal calls there. The
+// adapter builds JUCE with JUCE_MODAL_LOOPS_PERMITTED=1 (native/CMakeLists.txt patches the header)
+// and supplies MessageManager::runDispatchLoopUntil() here: it runs the app's main Looper nested for
+// short slices through com.vstghost.JuceModalLoop (Kotlin), which is what PopupMenu::show(),
+// AlertWindow::showOkCancelBox() and friends need. Plugins that use them (Odin2) then work unchanged.
+namespace {
+JavaVM* g_vm = nullptr;
+jclass g_modalClass = nullptr;
+jmethodID g_modalRunFor = nullptr;
+}  // namespace
+
+#if JUCE_MODAL_LOOPS_PERMITTED
+namespace juce {
+bool MessageManager::runDispatchLoopUntil(int millisecondsToRunFor) {
+    jassert(isThisTheMessageThread());
+    if (!g_vm || !g_modalRunFor) return false;
+    JNIEnv* env = nullptr;
+    if (g_vm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK || !env) return false;
+    const auto end = Time::currentTimeMillis() + millisecondsToRunFor;
+    do {
+        const jint slice = millisecondsToRunFor < 0 ? 10 : (jint)jmax<int64>(1, jmin<int64>(10, end - Time::currentTimeMillis()));
+        env->CallStaticBooleanMethod(g_modalClass, g_modalRunFor, slice);
+        if (env->ExceptionCheck()) { env->ExceptionClear(); return false; }
+    } while (millisecondsToRunFor < 0 || Time::currentTimeMillis() < end);
+    return true;
+}
+}  // namespace juce
+#endif
+
 int vgn_init(JNIEnv* env, jobject appContext) {
     static bool done = false;
     if (done) return 1;
@@ -69,6 +99,12 @@ int vgn_init(JNIEnv* env, jobject appContext) {
     juce::JNIClassBase::initialiseAllClasses(env, appContext);
     juce::Thread::initialiseJUCE(env, appContext);
     juce::initialiseJuce_GUI();  // MessageManager on this (the Android main) thread
+    env->GetJavaVM(&g_vm);
+    if (jclass c = env->FindClass("com/vstghost/JuceModalLoop")) {
+        g_modalClass = (jclass)env->NewGlobalRef(c);
+        g_modalRunFor = env->GetStaticMethodID(g_modalClass, "runFor", "(I)Z");
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
     done = true;
     return 1;
 }

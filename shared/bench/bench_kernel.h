@@ -1,6 +1,6 @@
 /*
  * VST gHost: fixed DSP benchmark kernel.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
  *
  * The same source is compiled
  *   - for x86_64 Windows (payload/tests/hello.c, run under Wine + Box64), and

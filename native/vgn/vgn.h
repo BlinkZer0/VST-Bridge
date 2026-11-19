@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 //
 // vgn: the C interface every native (Android) plugin library exports. VST gHost's engine loads a
 // plugin library (lib vg_<name>.so, built from the plugin's own JUCE source by native/CMakeLists.txt)

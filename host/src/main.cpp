@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 //
 // vstghost-host.exe: VST gHost bridge host (Phase 1: offline).
 //

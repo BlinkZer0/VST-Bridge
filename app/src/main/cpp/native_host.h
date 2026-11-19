@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 //
 // Native (Android-built) plugins in a slot: a library exporting the vgn interface (native/vgn/vgn.h)
 // runs inside the app process, called straight from the audio callback. Control requests use the

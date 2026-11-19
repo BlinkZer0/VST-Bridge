@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 //
 // Raw x86_64 Linux system calls from inside a Windows (PE) program running under Wine.
 //

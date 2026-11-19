@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 """Writes the Phase 1 test MIDI file (format 0, 120 BPM, ~20 s).
 
 Sections (seconds):

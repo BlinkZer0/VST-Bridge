@@ -48,10 +48,17 @@ GLIBC_LIBS=(ld-linux-aarch64.so.1 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0
 GCC_LIBS=(libstdc++.so.6 libgcc_s.so.1 libatomic.so.1)
 
 step_glibc() {
-    log "glibc (Termux-pacman ${TERMUX_GLIBC_FILE})"
     local g c d="$WORK/glibc-pkg"
-    g="$(fetch "$TERMUX_GPKG_REPO/$TERMUX_GLIBC_FILE" "$TERMUX_GLIBC_SHA256" "$TERMUX_GLIBC_FILE")"
-    c="$(fetch "$TERMUX_GPKG_REPO/$TERMUX_GCCLIBS_FILE" "$TERMUX_GCCLIBS_SHA256" "$TERMUX_GCCLIBS_FILE")"
+    if [ -n "${TERMUX_GLIBC_LOCAL:-}" ]; then
+        # Built from source by payload/build-glibc-src.sh (same recipe as the prebuilt packages).
+        log "glibc (from source: $TERMUX_GLIBC_LOCAL)"
+        g="$TERMUX_GLIBC_LOCAL"; c="$TERMUX_GCCLIBS_LOCAL"
+        [ -f "$g" ] && [ -f "$c" ] || { echo "TERMUX_GLIBC_LOCAL / TERMUX_GCCLIBS_LOCAL not found" >&2; exit 1; }
+    else
+        log "glibc (Termux-pacman ${TERMUX_GLIBC_FILE})"
+        g="$(fetch "$TERMUX_GPKG_REPO/$TERMUX_GLIBC_FILE" "$TERMUX_GLIBC_SHA256" "$TERMUX_GLIBC_FILE")"
+        c="$(fetch "$TERMUX_GPKG_REPO/$TERMUX_GCCLIBS_FILE" "$TERMUX_GCCLIBS_SHA256" "$TERMUX_GCCLIBS_FILE")"
+    fi
     rm -rf "$d" && mkdir -p "$d"
     tar -xJf "$g" -C "$d" data
     tar -xJf "$c" -C "$d" data

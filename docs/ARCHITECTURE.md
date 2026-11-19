@@ -185,7 +185,11 @@ STATUS.md
 
 ## Decisions recorded (2026-11-18)
 
-1. **License: GPL-3.0-or-later** (allows reusing yabridge code). `LICENSE` added.
+1. ~~License: GPL-3.0-or-later (allows reusing yabridge code).~~ **Changed 2026-11-19: the app is
+   proprietary and sold on Play.** No yabridge (GPL) code was ever reused (checked). Consequences:
+   Odin2 (GPL-3) is not bundled; JUCE needs its commercial/Personal license for the bundled
+   instruments; Wine and glibc (LGPL) ship as separate programs with a source offer
+   (`app/src/main/assets/licenses/NOTICES.md`).
 2. **Payload is built from source** (Box64, Wine) in a Linux build environment, with an Android-patched arm64 glibc. See §7 for the one deviation: Termux's prebuilt glibc package, pinned by SHA-256.
 3. **AGPL (via aap-juce) is acceptable** for the user's JUCE plugins.
 4. **App name "VST gHost"**, package `com.vstghost` (Play edition) and `com.vstghost.sideload` (sideload edition).

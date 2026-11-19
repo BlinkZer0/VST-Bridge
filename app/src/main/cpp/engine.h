@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 //
 // Multi-slot real-time engine. Each slot owns one bridge (one plugin host process).
 //   slot 0     : the app's own player

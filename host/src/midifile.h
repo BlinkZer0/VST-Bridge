@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 // Standard MIDI File (format 0/1) reader: merges all tracks and converts ticks to seconds
 // using the file's tempo map.
 #pragma once

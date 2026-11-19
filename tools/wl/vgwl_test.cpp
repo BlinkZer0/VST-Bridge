@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 //
 // PC test driver for the vgwl compositor (shared/wl). Runs the compositor on a socket, then follows a
 // script of timed actions so Wine's Wayland driver can be exercised without the phone:

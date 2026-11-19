@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 #
 # vg_binary_data(<target> <outdir> <headerName> <namespace> <files...>)
 # Generates BinaryData.h/.cpp the way JUCE's juceaide does (same identifiers, namedResourceList,

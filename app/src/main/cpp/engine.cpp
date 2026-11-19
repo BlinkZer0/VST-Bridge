@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 //
 // Real-time audio engine: an Oboe output stream whose callback mixes the slots whose audio
 // goes to the app (see engine.h). Each slot's bridge host renders ahead into shared memory.

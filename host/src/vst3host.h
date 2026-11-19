@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 // Minimal VST3 host: load a .vst3 module, inspect it, and render audio offline.
 // Uses only Steinberg's pluginterfaces headers (MIT); no SDK hosting helpers.
 #pragma once

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 //
 // Engine side of the bridge protocol (shared/ipc/vg_ipc.h). Portable Linux/Android C++:
 // used by the Android audio engine and by tools/ipc_sim (PC test against the real host).

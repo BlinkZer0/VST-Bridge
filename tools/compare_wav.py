@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 """Compare two float32 WAVs (e.g. device render vs PC reference). No dependencies.
 
 Prints: identical?, max |diff|, diff RMS in dB relative to the reference, and

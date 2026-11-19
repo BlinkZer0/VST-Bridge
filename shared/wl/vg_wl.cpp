@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 // See vg_wl.h. Wire format: each message is [object id][size << 16 | opcode][args...], 32-bit words in
 // host byte order; strings/arrays are length-prefixed and padded to 4 bytes; fds travel as
 // SCM_RIGHTS ancillary data in protocol order.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 //
 // JNI surface of the in-app Wayland compositor (shared/wl/vg_wl.*) that shows Windows plugin editors.
 // One compositor per app process; Wine processes connect to it through WAYLAND_DISPLAY.

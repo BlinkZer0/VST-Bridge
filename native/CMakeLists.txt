@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 #
 # Phase 5: JUCE plugins built from their own, unmodified source as native Android libraries
 # (lib vgn_<target>.so, exporting the vgn interface in vgn/vgn.h). Included from
@@ -11,8 +11,8 @@
 # Local checkouts: set VG_PLUGIN_SRC_ROOT (Gradle: -Pvg.pluginSrcRoot=...) to a folder containing
 # the projects' folders; a project whose local folder exists there is built from it.
 #
-# JUCE is AGPLv3 (or commercial): these libraries are AGPLv3-covered; the rest of VST gHost stays
-# GPL-3.0-or-later, which GPLv3 section 13 allows combining with.
+# JUCE is AGPLv3 or commercial. VST gHost is proprietary, so the bundled plugins are built under
+# JUCE's commercial (Personal/Indie/Pro) terms; GPL/AGPL third-party plugins cannot be bundled.
 
 include(FetchContent)
 
@@ -25,6 +25,21 @@ FetchContent_Declare(vg_juce URL https://github.com/juce-framework/JUCE/archive/
     SOURCE_SUBDIR do-not-configure DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(vg_juce)
 set(VG_JUCE_DIR "${vg_juce_SOURCE_DIR}")
+# JUCE hard-codes JUCE_MODAL_LOOPS_PERMITTED=0 on Android. The adapter supplies the missing piece (a
+# nested message loop, see JuceModalLoop.kt and vgn_adapter.cpp), so let the flag be set like on
+# other platforms: plugins written with PopupMenu::show() / AlertWindow::showOkCancelBox() build.
+set(_pd "${VG_JUCE_DIR}/modules/juce_core/system/juce_PlatformDefs.h")
+file(READ "${_pd}" _pdtext)
+string(REPLACE "#if JUCE_ANDROID
+ /** @cond */
+ #define JUCE_MODAL_LOOPS_PERMITTED 0"
+               "#if JUCE_ANDROID && ! defined (JUCE_MODAL_LOOPS_PERMITTED)
+ /** @cond */
+ #define JUCE_MODAL_LOOPS_PERMITTED 0" _pdnew "${_pdtext}")
+if(NOT _pdnew STREQUAL _pdtext)
+    file(WRITE "${_pd}" "${_pdnew}")
+    message(STATUS "VgJuce: juce_PlatformDefs.h patched (modal loops may be enabled on Android)")
+endif()
 set(VG_VGN_DIR "${CMAKE_CURRENT_LIST_DIR}/vgn")
 
 # Route every way a project can ask for JUCE to the adapter, then load it.
@@ -87,8 +102,7 @@ vg_add_juce_project(pedalfaster LOCAL Pedal=Faster
 vg_add_juce_project(nostrings LOCAL "No Strings" SUBDIR vst)
 vg_add_juce_project(theham LOCAL "The Ham" SUBDIR vst)
 
-# ---- Third-party open-source JUCE plugins (unmodified upstream source) ----
-# Odin2 (GPL-3.0): https://github.com/TheWaveWarden/odin2
-vg_add_juce_project(odin2 LOCAL odin2
-    GIT https://github.com/TheWaveWarden/odin2.git COMMIT 265e9e227581357efb87ed7217381f8a40c5e2bf
-    SUBMODULES libs/tuning-library libs/json)
+# Third-party GPL/AGPL plugins (e.g. Odin2, GPL-3) are not bundled: the app is proprietary. They
+# build through the adapter (modal loops included, see vgn_adapter.cpp) but must not ship in it.
+# Plugins with very large parameter layouts need clang's nesting limit raised:
+add_compile_options(-fbracket-depth=1024)

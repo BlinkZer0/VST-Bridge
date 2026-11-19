@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 //
 // AAP (Audio Plugins For Android) glue: our 8 "bridge slots" as AAP plugins.
 //

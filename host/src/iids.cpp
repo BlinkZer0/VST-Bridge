@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 // Defines the interface IDs (FUID statics) of every VST3 interface the host uses.
 // Same technique as the SDK's vstinitiids.cpp: INIT_CLASS_IID before the headers.
 #define INIT_CLASS_IID

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 //
 // Plugin editor window (VST3 IPlugView in a Win32 top-level window), used by the live `serve` mode
 // (editor_open / editor_close requests) and by the `editor` test command, which opens the editor for

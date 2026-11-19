@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 #
 # VST gHost's universal JUCE adapter: JUCE's CMake API (juce_add_plugin, juce_add_binary_data,
 # juce::juce_* module targets, ...) re-implemented for Android, so an unmodified JUCE plugin project
@@ -132,7 +132,7 @@ endforeach()
 target_compile_definitions(juce_core INTERFACE JUCE_ANDROID=1 JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
     JUCE_STANDALONE_APPLICATION=0 JUCE_USE_ANDROID_OBOE=0 JUCE_USE_CURL=0 JUCE_DISPLAY_SPLASH_SCREEN=0
     JUCE_REPORT_APP_USAGE=0 JUCE_PLUGINHOST_VST3=0 JUCE_PLUGINHOST_AU=0 JUCE_PLUGINHOST_LV2=0
-    JUCE_PLUGINHOST_LADSPA=0 JUCE_PLUGINHOST_ARA=0 JUCE_MODAL_LOOPS_PERMITTED=0)
+    JUCE_PLUGINHOST_LADSPA=0 JUCE_PLUGINHOST_ARA=0 JUCE_MODAL_LOOPS_PERMITTED=1)
 target_compile_definitions(juce_core INTERFACE NDEBUG=1 _NDEBUG=1)
 target_link_libraries(juce_core INTERFACE android log OpenSLES vg_cpufeatures)
 

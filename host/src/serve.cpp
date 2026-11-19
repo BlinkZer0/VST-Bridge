@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 //
 // `vstghost-host serve <plugin> --shm <file>`: live mode for the real-time engine.
 // See shared/ipc/vg_ipc.h for the shared-memory protocol.

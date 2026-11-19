@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LicenseRef-VstGhost-Proprietary
 //
 // ipc_sim: plays the Android engine's role on a Linux PC, against the real bridge host running
 // under Wine. Tests the shared-memory protocol, futex wakeups from PE code, control commands,
