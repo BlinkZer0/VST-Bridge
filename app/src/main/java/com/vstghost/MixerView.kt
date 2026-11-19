@@ -53,6 +53,8 @@ class MixerView(context: Context) : View(context) {
 
     var slots: List<Int> = (1..8).toList()
     var names: (Int) -> String = { if (it == MASTER) "Master" else "Slot $it" }
+    /** Effect strips: the fader is the wet amount in percent (0..100) instead of a gain in dB. */
+    var isWet: (Int) -> Boolean = { false }
     var onGain: (slot: Int, gain: Float) -> Unit = { _, _ -> }
 
     private val faderDb = HashMap<Int, Float>()
@@ -84,14 +86,16 @@ class MixerView(context: Context) : View(context) {
         if (mute) muted.add(slot) else muted.remove(slot)
         invalidate()
     }
-    fun gainDb(slot: Int) = faderDb[slot] ?: 0f
+    /** Fader value: dB for gain strips, percent (0..100) for wet strips. */
+    fun gainDb(slot: Int) = faderDb[slot] ?: if (isWet(slot)) 100f else 0f
     fun isMuted(slot: Int) = slot in muted
 
-    /** Linear gain the engine should apply for the strip's current fader and mute. */
+    /** What the engine should apply: a linear gain, or the wet amount 0..1 for an effect. */
     fun linearGain(slot: Int): Float {
         if (slot in muted) return 0f
-        val db = gainDb(slot)
-        return if (db <= MIN_DB) 0f else 10f.pow(db / 20f)
+        val v = gainDb(slot)
+        if (isWet(slot)) return (v / 100f).coerceIn(0f, 1f)
+        return if (v <= MIN_DB) 0f else 10f.pow(v / 20f)
     }
 
     /** Feed one frame of peaks (linear); call at the display rate. */
@@ -107,7 +111,7 @@ class MixerView(context: Context) : View(context) {
 
     // Geometry per strip: label on top, meter and fader side by side, mute at the bottom.
     private fun stripW() = width.toFloat() / slots.size
-    private fun top() = 20f * dp
+    private fun top() = 27f * dp   // room for a knob at the very top under the label
     private fun bottom() = height - 30f * dp
 
     // Mixer taper: 0 dB sits at 78 % of the travel, the top 22 % is the +6 dB boost, and the
@@ -121,6 +125,10 @@ class MixerView(context: Context) : View(context) {
         else MIN_DB + kotlin.math.sqrt(fraction / 0.78f) * -MIN_DB
     private fun faderY(db: Float): Float = bottom() - fraction(db) * (bottom() - top())
     private fun dbAtY(y: Float): Float = dbOf(((bottom() - y) / (bottom() - top())).coerceIn(0f, 1f))
+    // Wet strips are linear in percent.
+    private fun fractionOf(slot: Int, v: Float) = if (isWet(slot)) (v / 100f).coerceIn(0f, 1f) else fraction(v)
+    private fun valueOf(slot: Int, f: Float) = if (isWet(slot)) f.coerceIn(0f, 1f) * 100f else dbOf(f)
+    private fun knobY(slot: Int, v: Float) = bottom() - fractionOf(slot, v) * (bottom() - top())
 
     override fun onDraw(c: Canvas) {
         val sw = stripW()
@@ -147,13 +155,14 @@ class MixerView(context: Context) : View(context) {
             // Fader
             val fx = x0 + sw * 0.62f
             c.drawRoundRect(RectF(fx - 2f * dp, t, fx + 2f * dp, b), 2f * dp, 2f * dp, track)
-            val y0 = faderY(0f)
+            val wet = isWet(s)
+            val y0 = if (wet) t else faderY(0f)
             c.drawLine(fx - 9f * dp, y0, fx + 9f * dp, y0, tick)
             val db = gainDb(s)
-            val ky = faderY(db)
+            val ky = knobY(s, db)
             c.drawRoundRect(RectF(fx - 11f * dp, ky - 7f * dp, fx + 11f * dp, ky + 7f * dp), 3f * dp, 3f * dp,
                 if (s in muted) knobMuted else if (s == MASTER) knobMaster else knob)
-            c.drawText(if (db <= MIN_DB) "−∞" else "%+.1f".format(db), fx, b + 11f * dp, dim)
+            c.drawText(if (wet) "%d%% wet".format(db.toInt()) else if (db <= MIN_DB) "−∞" else "%+.1f".format(db), fx, b + 11f * dp, dim)
             // Mute
             val mr = RectF(cx - 14f * dp, height - 17f * dp, cx + 14f * dp, height - 2f * dp)
             c.drawRoundRect(mr, 4f * dp, 4f * dp, if (s in muted) muteOn else muteOff)
@@ -173,8 +182,8 @@ class MixerView(context: Context) : View(context) {
                 dragSlot = s; dragStartY = e.y; dragStartDb = gainDb(s)
                 if (e.y < top() || e.y > bottom()) return true
                 // A tap away from the knob jumps there; a drag from anywhere is relative.
-                if (kotlin.math.abs(e.y - faderY(dragStartDb)) > 12f * dp) {
-                    faderDb[s] = dbAtY(e.y); dragStartDb = faderDb[s]!!; dragStartY = e.y
+                if (kotlin.math.abs(e.y - knobY(s, dragStartDb)) > 12f * dp) {
+                    faderDb[s] = valueOf(s, ((bottom() - e.y) / (bottom() - top())).coerceIn(0f, 1f)); dragStartDb = faderDb[s]!!; dragStartY = e.y
                     onGain(s, linearGain(s)); invalidate()
                 }
                 parent?.requestDisallowInterceptTouchEvent(true)
@@ -183,7 +192,7 @@ class MixerView(context: Context) : View(context) {
             MotionEvent.ACTION_MOVE -> {
                 if (dragSlot == Int.MIN_VALUE) return true
                 val range = bottom() - top()
-                faderDb[dragSlot] = dbOf((fraction(dragStartDb) + (dragStartY - e.y) / range).coerceIn(0f, 1f))
+                faderDb[dragSlot] = valueOf(dragSlot, (fractionOf(dragSlot, dragStartDb) + (dragStartY - e.y) / range).coerceIn(0f, 1f))
                 onGain(dragSlot, linearGain(dragSlot)); invalidate(); return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { dragSlot = Int.MIN_VALUE; return true }

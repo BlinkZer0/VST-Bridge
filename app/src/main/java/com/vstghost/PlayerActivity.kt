@@ -77,6 +77,19 @@ class PlayerActivity : AppCompatActivity() {
 
     private var plugins: List<File> = emptyList()
     private val slotBars = HashMap<Int, MeterBar>()
+    /** Instrument slots played together by the keyboard / USB MIDI ("Play together" in a slot's menu). Empty = the current one. */
+    private val playSet = LinkedHashSet<Int>()
+    private fun playedSlots(): List<Int> =
+        if (playSet.isNotEmpty()) playSet.toList() else listOf(if (current in INST_SLOTS) current else NativeEngine.playerSlot)
+    private fun applyPlayRouting() {
+        val played = playedSlots()
+        NativeEngine.playerSlots = played.toIntArray()
+        getSharedPreferences("player", MODE_PRIVATE).edit().putString("playSet", playSet.joinToString(",")).apply()
+    }
+    private fun togglePlayTogether(s: Int) {
+        if (s in playSet) { playSet.remove(s); NativeEngine.sendMidi(s, 0xB0, 123, 0) } else playSet.add(s)
+        applyPlayRouting(); refreshSlots()
+    }
     /** The one reader of the engine's peak meters (they reset on read): feeds the slot cards and the mixer. */
     private var mixerSink: ((Map<Int, Float>) -> Unit)? = null
     private val meterTick = object : Runnable {
@@ -126,6 +139,9 @@ class PlayerActivity : AppCompatActivity() {
             Bridge.ensureSession(payload)
             NativeEngine.startAudio()
             applyMixerPrefs()
+            getSharedPreferences("player", MODE_PRIVATE).getString("playSet", "")!!.split(',').mapNotNull { it.toIntOrNull() }
+                .filter { it in INST_SLOTS }.let { playSet.addAll(it) }
+            ui.post { applyPlayRouting(); refreshSlots() }
             ui.post {
                 if (android.os.Build.VERSION.SDK_INT >= 33 &&
                     checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
@@ -258,6 +274,7 @@ class PlayerActivity : AppCompatActivity() {
         // The Tests screen points the keyboard/MIDI at slot 0 while it runs; take it back.
         if (current in INST_SLOTS) NativeEngine.playerSlot = current
         refreshSlots(); selectSlot(current)   // the notification's Stop may have unloaded everything meanwhile
+        applyPlayRouting()
         ui.removeCallbacks(meterTick); ui.post(meterTick)
     }
 
@@ -308,6 +325,7 @@ class PlayerActivity : AppCompatActivity() {
         findViewById<Button>(R.id.moreBtn).setOnClickListener { v ->
             android.widget.PopupMenu(this, v).apply {
                 menu.add("Mixer").setOnMenuItemClickListener { showMixer(); true }
+                menu.add("Instrument sets…").setOnMenuItemClickListener { showSets(); true }
                 menu.add("Install plugin…").setOnMenuItemClickListener { installFromFolders(); true }
                 menu.add("Uninstall plugin…").setOnMenuItemClickListener { uninstallPlugin(); true }
                 menu.add("Stats").setOnMenuItemClickListener { statsPanel.visibility = if (statsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE; true }
@@ -413,9 +431,14 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun refreshSlots() {
+        // Orange outline = the current slot (editor, presets, unload act on it); green = played by the keyboard.
+        val played = playedSlots()
+        val amber = getColor(R.color.vg_amber); val outline = getColor(R.color.vg_outline)
         for ((s, b) in slotBtns) {
             b.text = slotText(s)
-            b.isChecked = s == current
+            b.isChecked = s in INST_SLOTS && s in played
+            b.strokeColor = android.content.res.ColorStateList.valueOf(if (s == current) amber else outline)
+            b.strokeWidth = dp(if (s == current) 2 else 1)
         }
         loadBtn.text = "Load → ${slotName(current)}"
     }
@@ -423,8 +446,10 @@ class PlayerActivity : AppCompatActivity() {
     private fun selectSlot(s: Int) {
         if (current != s) keyboard.allOff()
         current = s
-        // The keyboard and USB MIDI play the selected instrument (or the last instrument selected).
+        // The keyboard and USB MIDI play the selected instrument (or the last instrument selected),
+        // or the "play together" group when one is set.
         if (s in INST_SLOTS) NativeEngine.playerSlot = s
+        applyPlayRouting()
         refreshSlots()
         val b = bridge
         header.text = if (b.plugin != null) "${slotName(s)}  ·  ${loadedName}" else "${slotName(s)}: empty"
@@ -437,6 +462,8 @@ class PlayerActivity : AppCompatActivity() {
         val b = Bridge.get(this, s)
         val items = mutableListOf("Load the selected plugin here")
         if (b.isRunning) items += listOf("Editor", "Unload")
+        if (b.isRunning && s in INST_SLOTS && b.isInstrument)
+            items += if (s in playSet) "Play together  ✓ (remove from the group)" else "Play together (multi-select)"
         SlotManager.assigned(s)?.takeIf { b.plugin == null }?.let { a ->
             val shown = plugins.firstOrNull { it.nameWithoutExtension == a }?.let { NativePlugins.displayName(it) } ?: a
             items += "Other apps still see \"$shown\" here: clear"
@@ -446,6 +473,7 @@ class PlayerActivity : AppCompatActivity() {
                 "Load the selected plugin here" -> loadSelected()
                 "Editor" -> startActivity(Intent(this, if (b.isNativeLoaded) NativeEditorActivity::class.java else EditorActivity::class.java).putExtra(EditorActivity.EXTRA_SLOT, s))
                 "Unload" -> unloadCurrent()
+                "Play together  ✓ (remove from the group)", "Play together (multi-select)" -> togglePlayTogether(s)
                 else -> { SlotManager.assign(s, null); refreshSlots() }
             }
         }.show()
@@ -459,9 +487,13 @@ class PlayerActivity : AppCompatActivity() {
     private fun applyMixerPrefs() {
         val p = mixerPrefs
         for (s in INST_SLOTS + FX_SLOTS + listOf(MixerView.MASTER)) {
-            val db = p.getFloat("db$s", 0f)
             val mute = p.getBoolean("mute$s", false)
-            val g = if (mute || db <= MixerView.MIN_DB) 0f else Math.pow(10.0, db / 20.0).toFloat()
+            val g = if (s in FX_SLOTS) {
+                if (mute) 0f else (p.getFloat("wet$s", 100f) / 100f).coerceIn(0f, 1f)   // effects: wet amount
+            } else {
+                val db = p.getFloat("db$s", 0f)
+                if (mute || db <= MixerView.MIN_DB) 0f else Math.pow(10.0, db / 20.0).toFloat()
+            }
             if (s == MixerView.MASTER) NativeEngine.setGain(g) else NativeEngine.setSlotGain(s, g)
         }
     }
@@ -471,11 +503,12 @@ class PlayerActivity : AppCompatActivity() {
         val mixer = MixerView(this).apply {
             slots = (INST_SLOTS + FX_SLOTS).toList() + MixerView.MASTER
             names = { s -> if (s == MixerView.MASTER) "Master" else slotText(s).removeSuffix(" ✗") }
+            isWet = { s -> s in FX_SLOTS }
             val p = mixerPrefs
-            for (s in slots) setGainDb(s, p.getFloat("db$s", 0f), p.getBoolean("mute$s", false))
+            for (s in slots) setGainDb(s, if (s in FX_SLOTS) p.getFloat("wet$s", 100f) else p.getFloat("db$s", 0f), p.getBoolean("mute$s", false))
             onGain = { s, g ->
                 if (s == MixerView.MASTER) NativeEngine.setGain(g) else NativeEngine.setSlotGain(s, g)
-                mixerPrefs.edit().putFloat("db$s", gainDb(s)).putBoolean("mute$s", isMuted(s)).apply()
+                mixerPrefs.edit().putFloat(if (s in FX_SLOTS) "wet$s" else "db$s", gainDb(s)).putBoolean("mute$s", isMuted(s)).apply()
             }
         }
         val dialog = MaterialAlertDialogBuilder(this).setTitle("Mixer")
@@ -486,6 +519,96 @@ class PlayerActivity : AppCompatActivity() {
         }
         dialog.setOnDismissListener { mixerSink = null }
         dialog.show()
+    }
+
+    // ------------------------------------------------------------------ instrument sets
+
+    private val setsDir get() = File(filesDir, "sets").apply { mkdirs() }
+
+    /** ⋮ → Instrument sets: save the loaded slots (plugins + their state, play group, mixer) under a name; load or delete sets. */
+    private fun showSets() {
+        val sets = setsDir.listFiles { f -> f.name.endsWith(".json") }?.map { it.nameWithoutExtension }?.sorted().orEmpty()
+        val d = MaterialAlertDialogBuilder(this).setTitle("Instrument sets")
+            .setNeutralButton("Save current as…") { _, _ -> askSetName() }
+            .setNegativeButton("Close", null)
+        if (sets.isEmpty()) d.setMessage("No sets yet. \"Save current as…\" keeps the plugins loaded now, their settings, the play-together group and the mixer, so one tap brings them all back.")
+        else d.setItems(sets.toTypedArray()) { _, which ->
+            val name = sets[which]
+            MaterialAlertDialogBuilder(this).setTitle(name)
+                .setPositiveButton("Load") { _, _ -> loadSet(name) }
+                .setNegativeButton("Delete") { _, _ -> File(setsDir, "$name.json").delete(); setStatus("Set \"$name\" deleted."); showSets() }
+                .setNeutralButton("Cancel", null).show()
+        }
+        d.show()
+    }
+
+    private fun askSetName() {
+        val input = android.widget.EditText(this).apply { hint = "Name"; setSingleLine(); setPadding(dp(20), dp(12), dp(20), dp(12)) }
+        MaterialAlertDialogBuilder(this).setTitle("Save instrument set").setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val name = input.text.toString().trim().replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                if (name.isEmpty()) { setStatus("A set needs a name."); return@setPositiveButton }
+                saveSet(name)
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun saveSet(name: String) {
+        setStatus("Saving set \"$name\"…")
+        io.execute {
+            val slotsJson = JSONObject()
+            for (s in INST_SLOTS + FX_SLOTS) {
+                val b = Bridge.get(this, s)
+                val f = b.plugin ?: continue
+                if (!b.isRunning) continue
+                val entry = JSONObject().put("plugin", f.nameWithoutExtension)
+                b.request("get_state")?.let { r -> JSONObject(r).takeIf { it.optBoolean("ok") }?.let { entry.put("state", it) } }
+                slotsJson.put(s.toString(), entry)
+            }
+            val mixer = JSONObject()
+            for ((k, v) in mixerPrefs.all) mixer.put(k, v)
+            val j = JSONObject().put("slots", slotsJson).put("play", org.json.JSONArray(playSet.toList())).put("mixer", mixer)
+                .put("saved", System.currentTimeMillis())
+            File(setsDir, "$name.json").writeText(j.toString())
+            setStatus("Set \"$name\" saved: ${slotsJson.length()} plugin(s).")
+        }
+    }
+
+    private fun loadSet(name: String) {
+        val j = runCatching { JSONObject(File(setsDir, "$name.json").readText()) }.getOrNull()
+            ?: run { setStatus("Set \"$name\" could not be read."); return }
+        setStatus("Loading set \"$name\"…")
+        keyboard.allOff()
+        val slotsJson = j.optJSONObject("slots") ?: JSONObject()
+        io.execute {
+            // Unload everything first (other apps see the slots empty too).
+            for (s in INST_SLOTS + FX_SLOTS) {
+                val b = Bridge.get(this, s)
+                if (b.plugin != null) { b.stop(); mine.remove(s); SlotManager.assign(s, null) }
+            }
+            ui.post { playSet.clear(); refreshSlots() }
+            val missing = mutableListOf<String>()
+            for (s in INST_SLOTS + FX_SLOTS) {
+                val entry = slotsJson.optJSONObject(s.toString()) ?: continue
+                val pname = entry.optString("plugin")
+                val f = if (pname.startsWith("vgn_")) NativePlugins.fileFor(this, pname).takeIf { pname in NativePlugins.libs(this) }
+                        else File(filesDir, "plugins/$pname.vst3").takeIf { it.exists() }
+                if (f == null) { missing += pname; continue }
+                lastStates.remove(s)
+                load(s, f, entry.optJSONObject("state"))   // queues on io behind this task; the loads run in order
+            }
+            io.execute {
+                ui.post {
+                    j.optJSONObject("mixer")?.let { m ->
+                        val e = mixerPrefs.edit().clear()
+                        for (k in m.keys()) { val v = m.get(k); if (v is Boolean) e.putBoolean(k, v) else e.putFloat(k, (v as Number).toFloat()) }
+                        e.apply(); applyMixerPrefs()
+                    }
+                    j.optJSONArray("play")?.let { a -> for (i in 0 until a.length()) a.optInt(i).takeIf { it in INST_SLOTS }?.let { playSet.add(it) } }
+                    applyPlayRouting(); refreshSlots()
+                    setStatus("Set \"$name\" loaded" + if (missing.isEmpty()) "." else " · not installed: ${missing.joinToString()}")
+                }
+            }
+        }
     }
 
     // ------------------------------------------------------------------ uninstall
@@ -526,7 +649,7 @@ class PlayerActivity : AppCompatActivity() {
             Bridge.get(this, s).stop()
             mine.remove(s)
             SlotManager.assign(s, null)  // empty for other apps too
-            ui.post { refreshSlots(); selectSlot(s); setStatus("${slotName(s)} unloaded.") }
+            ui.post { playSet.remove(s); applyPlayRouting(); refreshSlots(); selectSlot(s); setStatus("${slotName(s)} unloaded.") }
         }
     }
 

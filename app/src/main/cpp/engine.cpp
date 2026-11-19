@@ -158,11 +158,15 @@ public:
             return nat ? !nat->instrument() : sl.kind.load(std::memory_order_relaxed) == 1;
         };
         // The slot's fader, then its peaks: `peak` for the self-test, `meter` for the mixer.
-        auto addPeak = [&](Slot& sl) {
+        // Instruments: the fader is a gain. Effects: it is the wet amount (0 = the input passes
+        // through untouched, 1 = fully processed), so an effect never changes the level of what
+        // flows down the chain, only how much of it is affected.
+        auto addPeak = [&](Slot& sl, const float* dryL, const float* dryR) {
             const float g = sl.gain.load(std::memory_order_relaxed);
             float pk = 0.0f;
             for (uint32_t k = 0; k < n; ++k) {
-                l_[k] *= g; r_[k] *= g;
+                if (dryL) { l_[k] = dryL[k] + (l_[k] - dryL[k]) * g; r_[k] = dryR[k] + (r_[k] - dryR[k]) * g; }
+                else { l_[k] *= g; r_[k] *= g; }
                 pk = std::max(pk, std::max(std::fabs(l_[k]), std::fabs(r_[k])));
             }
             sl.peak.store(std::max(sl.peak.load(std::memory_order_relaxed), pk), std::memory_order_relaxed);
@@ -183,7 +187,7 @@ public:
                 b->read(l_, r_, n);
                 b->wakeHost();
             }
-            addPeak(sl);
+            addPeak(sl, nullptr, nullptr);
             for (uint32_t k = 0; k < n; ++k) { mixL_[k] += l_[k]; mixR_[k] += r_[k]; }
         }
         // Pass 2: the effect chain. chainL_/chainR_ carry the signal from stage to stage.
@@ -207,7 +211,7 @@ public:
                 b->read(l_, r_, n);
                 b->wakeHost();
             }
-            addPeak(sl);
+            addPeak(sl, inL, inR);
             memcpy(chainL_, l_, n * 4); memcpy(chainR_, r_, n * 4);
         }
         const float g = gain_.load(std::memory_order_relaxed);

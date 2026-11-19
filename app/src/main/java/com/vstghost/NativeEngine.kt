@@ -75,12 +75,18 @@ object NativeEngine {
      * 0 (the test harness's slot) until the player picks one.
      */
     @Volatile var playerSlot = 0
+    /** The keyboard and USB MIDI play all of these (the player's "play together" group, or just [playerSlot]). */
+    @Volatile var playerSlots: IntArray = intArrayOf(0)
 
     // ---- conveniences for the player slot (tests leave it at 0)
     fun hostState() = hostState(playerSlot)
     fun lastResponse() = lastResponse(playerSlot)
     fun request(req: String, timeoutMs: Int) = request(playerSlot, req, timeoutMs)
-    fun sendMidi(status: Int, d1: Int, d2: Int) = sendMidi(playerSlot, status, d1, d2)
+    fun sendMidi(status: Int, d1: Int, d2: Int): Boolean {
+        var ok = false
+        for (s in playerSlots) ok = sendMidi(s, status, d1, d2) || ok
+        return ok
+    }
     fun setTargetFill(frames: Int) = setTargetFill(playerSlot, frames)
     fun setInputMode(mode: Int) = setInputMode(playerSlot, mode)
     fun startProbe(note: Int, velocity: Int, thresholdDb: Float) = startProbe(playerSlot, note, velocity, thresholdDb)
