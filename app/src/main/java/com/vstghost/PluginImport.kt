@@ -91,6 +91,75 @@ class PluginImport(private val ctx: Context) {
         }
     }
 
+    // ---- "Install plugin": files found in the usual download places (needs All files access)
+
+    data class Candidate(val file: File, val where: String, val installable: Boolean, val note: String)
+
+    /** .vst3 files/bundles, zips and installers in Downloads, Documents, the storage root and SD cards. */
+    fun scanCommonFolders(): List<Candidate> {
+        val roots = linkedMapOf<File, String>()
+        val ext = android.os.Environment.getExternalStorageDirectory()
+        roots[File(ext, "Download")] = "Download"
+        roots[File(ext, "Documents")] = "Documents"
+        roots[ext] = "Internal storage"
+        for (d in ctx.getExternalFilesDirs(null).filterNotNull()) {
+            // /storage/XXXX-XXXX/Android/data/<pkg>/files -> the card's root
+            val card = generateSequence(d) { it.parentFile }.firstOrNull { it.name == "Android" }?.parentFile ?: continue
+            if (card.path != ext.path) { roots[File(card, "Download")] = "SD card/Download"; roots[card] = "SD card" }
+        }
+        val out = mutableListOf<Candidate>()
+        val seen = HashSet<String>()
+        fun add(c: Candidate) { if (seen.add(c.file.path)) out += c }
+        for ((root, label) in roots) {
+            if (!root.isDirectory) continue
+            val depth = if (label.endsWith("Download") || label == "Documents") 2 else 1
+            root.walkTopDown().maxDepth(depth)
+                // A .vst3 folder is a bundle: list it, don't walk into it. (A directory the filter
+                // rejects is not yielded by the walk, so it is added here.) Directories at maxDepth are
+                // yielded as plain entries and handled below.
+                .onEnter { d ->
+                    val n = d.name.lowercase()
+                    when {
+                        n == "android" -> false
+                        n.endsWith(".vst3") -> { add(Candidate(d, label, true, "VST3 bundle")); false }
+                        else -> true
+                    }
+                }
+                .forEach { f ->
+                    val n = f.name.lowercase()
+                    val c = when {
+                        n.endsWith(".vst3") -> Candidate(f, label, true, if (f.isDirectory) "VST3 bundle" else "VST3")
+                        n.endsWith(".zip") && f.isFile && f.length() < 600L shl 20 -> Candidate(f, label, true, "zip")
+                        n.endsWith(".7z") && f.isFile -> Candidate(f, label, false, "7z archive: unpack it first")
+                        (n.endsWith(".exe") || n.endsWith(".msi")) && f.isFile -> Candidate(f, label, false, "installer: not supported yet")
+                        else -> null
+                    } ?: return@forEach
+                    add(c)
+                }
+        }
+        return out.sortedWith(compareBy({ !it.installable }, { it.where }, { it.file.name.lowercase() }))
+    }
+
+    /** Imports a file found by [scanCommonFolders]. */
+    fun importFile(f: File): Result {
+        val lower = f.name.lowercase()
+        return when {
+            lower.endsWith(".zip") -> f.inputStream().use { importZip(it) }
+            lower.endsWith(".vst3") && f.isDirectory -> {
+                val dst = File(pluginDir, safeName(f.name))
+                dst.deleteRecursively()
+                f.copyRecursively(dst, overwrite = true)
+                Result(listOf(dst.name.removeSuffix(".vst3")), "Imported ${dst.name}")
+            }
+            lower.endsWith(".vst3") -> {
+                val dst = File(pluginDir, safeName(f.name))
+                f.copyTo(dst, overwrite = true)
+                Result(listOf(dst.name.removeSuffix(".vst3")), "Imported ${dst.name}")
+            }
+            else -> Result(emptyList(), "${f.name}: only .vst3 and .zip can be installed")
+        }
+    }
+
     private fun displayName(uri: Uri): String? = queryName(uri) ?: uri.lastPathSegment?.substringAfterLast('/')
 
     private fun queryName(uri: Uri): String? =

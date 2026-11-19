@@ -20,6 +20,7 @@ Still open from Phase 3: a third-party MIDI app playing our virtual device.
 | **4 virtual MIDI devices** ("VST gHost Inst 1–4"); 2 slots played at once via Android's MIDI API, both PASS | Phase 3 self-test |
 | **Native plugins**: E-Piano, Brass Knuckles, Pedal Faster built from source with the JUCE adapter, 40–140 µs per 96-frame block, native editors (web UI included), MIDI self-test PASS | Phase 5 |
 | **Imported Windows plugins**: Dexed (Direct2D editor complete, taps work), Pedal Faster Windows build (GDI editor), Surge XT (2081 parameters, OpenGL editor) — all with 0–1 underruns while the editor is open | Phase 5 |
+| **Install plugin** (⋮ menu): lists `.vst3` files/bundles and zips in Download, Documents, the storage root and SD cards (needs "All files access"; the app asks once and opens the settings page) and installs the tapped one. Verified: Dexed zip, No Strings and The Ham bundles from Download; `.exe`/`.msi`/`.7z` are listed as not installable | 2026-11-19 |
 
 ## Measured numbers (device)
 

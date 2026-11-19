@@ -158,6 +158,48 @@ class PlayerActivity : AppCompatActivity() {
             }.setNegativeButton("Cancel", null).show()
     }
 
+    /**
+     * ⋮ → Install plugin: lists .vst3 files/bundles and zips in Download, Documents, the storage
+     * root and SD cards, and installs the tapped one. Needs "All files access" (scoped storage
+     * hides other apps' downloads otherwise); asks for it once.
+     */
+    private fun installFromFolders() {
+        if (android.os.Build.VERSION.SDK_INT >= 30 && !android.os.Environment.isExternalStorageManager()) {
+            MaterialAlertDialogBuilder(this).setTitle("Allow access to your files")
+                .setMessage("To find plugins in Download, Documents and on SD cards, VST gHost needs \"All files access\". Android opens a settings page: switch it on and come back.")
+                .setPositiveButton("Open settings") { _, _ ->
+                    startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, android.net.Uri.parse("package:$packageName")))
+                }.setNegativeButton("Cancel", null).show()
+            return
+        }
+        setStatus("Looking for plugins in your folders…")
+        io.execute {
+            val found = PluginImport(this).scanCommonFolders()
+            ui.post {
+                if (found.isEmpty()) {
+                    setStatus("No .vst3 or zip files found in Download, Documents or on SD cards.")
+                    return@post
+                }
+                val labels = found.map { c ->
+                    val size = if (c.file.isFile) " · %.1f MB".format(c.file.length() / 1048576.0) else ""
+                    (if (c.installable) "" else "✗ ") + "${c.file.name}\n${c.where}$size · ${c.note}"
+                }.toTypedArray()
+                MaterialAlertDialogBuilder(this).setTitle("Install a plugin").setItems(labels) { _, which ->
+                    val c = found[which]
+                    if (!c.installable) { setStatus("${c.file.name}: ${c.note}"); return@setItems }
+                    setStatus("Installing ${c.file.name}…")
+                    io.execute {
+                        val r = runCatching { PluginImport(this).importFile(c.file) }
+                            .getOrElse { PluginImport.Result(emptyList(), "Install failed: ${it.message}") }
+                        setStatus(r.message + if (r.imported.isNotEmpty()) " · pick it in the plugin list and press Load" else "")
+                        ui.post { refreshPlugins() }
+                    }
+                }.setNegativeButton("Cancel", null).show()
+                setStatus("${found.count { it.installable }} installable file(s) found.")
+            }
+        }
+    }
+
     @Deprecated("Activity result API is fine for this plain Activity")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -236,6 +278,7 @@ class PlayerActivity : AppCompatActivity() {
         findViewById<Button>(R.id.presetsBtn).setOnClickListener { presets() }
         findViewById<Button>(R.id.moreBtn).setOnClickListener { v ->
             android.widget.PopupMenu(this, v).apply {
+                menu.add("Install plugin…").setOnMenuItemClickListener { installFromFolders(); true }
                 menu.add("Stats").setOnMenuItemClickListener { statsPanel.visibility = if (statsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE; true }
                 menu.add("Tests").setOnMenuItemClickListener { startActivity(Intent(this@PlayerActivity, MainActivity::class.java)); true }
             }.show()
