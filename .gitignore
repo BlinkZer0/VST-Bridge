@@ -20,3 +20,5 @@ results-audio/
 
 # Editor settings
 .vscode/
+
+.kotlin/

@@ -233,3 +233,8 @@ int cmdEditor(const std::wstring& pluginPath, int seconds, const std::wstring& s
 }
 
 }  // namespace vg
+
+void EditorWindow::setVisible(bool visible) {
+    if (!hwnd_) return;
+    ShowWindow((HWND)hwnd_, visible ? SW_SHOWNORMAL : SW_HIDE);
+}

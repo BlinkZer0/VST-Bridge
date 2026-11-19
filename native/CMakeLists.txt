@@ -48,13 +48,18 @@ set(JUCE_DIR "${CMAKE_CURRENT_LIST_DIR}/juce-shim" CACHE PATH "" FORCE)
 include(${CMAKE_CURRENT_LIST_DIR}/juce-shim/VgJuce.cmake)
 
 # vg_add_juce_project(<name> [URL <url> SHA256 <sha> | GIT <repo> COMMIT <sha> [SUBMODULES <paths...>]]
-#                     [LOCAL <folder name>] [SUBDIR <dir with CMakeLists.txt>])
+#                     [LOCAL <folder name>] [SUBDIR <dir with CMakeLists.txt>] [JUCER <project.jucer>])
+# JUCER: a Projucer project instead of a CMakeLists.txt (read by juce-shim/VgJucer.cmake).
+# TEST_ONLY: never part of a default build; only when named in VG_NATIVE_PLUGINS.
 # With neither URL nor GIT the project is local-only: built from VG_PLUGIN_SRC_ROOT/<LOCAL> when that
 # folder exists, otherwise skipped (not an error, so the default build stays reproducible).
 function(vg_add_juce_project name)
-    cmake_parse_arguments(A "" "URL;SHA256;GIT;COMMIT;LOCAL;SUBDIR" "SUBMODULES" ${ARGN})
+    cmake_parse_arguments(A "TEST_ONLY" "URL;SHA256;GIT;COMMIT;LOCAL;SUBDIR;JUCER" "SUBMODULES" ${ARGN})
     if(VG_NATIVE_PLUGINS AND NOT name IN_LIST VG_NATIVE_PLUGINS)
         return()
+    endif()
+    if(A_TEST_ONLY AND NOT name IN_LIST VG_NATIVE_PLUGINS)
+        return()   # test projects (third-party, not shippable) only when asked for by name
     endif()
     string(TOUPPER "vg_src_${name}" up)
     set(local "")
@@ -84,7 +89,11 @@ function(vg_add_juce_project name)
         set(dir "${dir}/${A_SUBDIR}")
     endif()
     message(STATUS "VgJuce: project ${name} from ${dir}")
-    add_subdirectory("${dir}" "${CMAKE_CURRENT_BINARY_DIR}/projects/${name}")
+    if(A_JUCER)
+        vg_add_jucer_plugin(${name} "${dir}/${A_JUCER}")
+    else()
+        add_subdirectory("${dir}" "${CMAKE_CURRENT_BINARY_DIR}/projects/${name}")
+    endif()
 endfunction()
 
 # ---- The plugins (the user's own; more JUCE projects go here the same way) ----
@@ -106,3 +115,9 @@ vg_add_juce_project(theham LOCAL "The Ham" SUBDIR vst)
 # build through the adapter (modal loops included, see vgn_adapter.cpp) but must not ship in it.
 # Plugins with very large parameter layouts need clang's nesting limit raised:
 add_compile_options(-fbracket-depth=1024)
+
+# Projucer-project test case (GPL-3, test only, never shipped): Dexed 0.9.6 still has a .jucer.
+# Build with -Pvg.nativePlugins=dexedjucer to exercise VgJucer.cmake.
+vg_add_juce_project(dexedjucer TEST_ONLY JUCER Dexed.jucer
+    URL https://github.com/asb2m10/dexed/archive/refs/tags/v0.9.6.tar.gz
+    SHA256 b1104a8e5a0403edd61e51e4f8476d0b863d9cef6b07721a1814cf6d18c8edf7)

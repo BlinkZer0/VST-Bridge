@@ -287,6 +287,9 @@ std::string handle(const std::string& req) {
     } else if (cmd == "editor_close") {
         if (g_editor) g_editor->close();
         j.boolean("ok", true);
+    } else if (cmd == "editor_visible" && a.size() >= 2) {
+        if (g_editor) g_editor->setVisible(a[1] != "0");
+        j.boolean("ok", g_editor != nullptr);
     } else if (cmd == "editor_state") {
         const bool open = g_editor && g_editor->isOpen();
         j.boolean("ok", true).boolean("open", open);

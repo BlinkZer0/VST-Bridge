@@ -17,6 +17,9 @@ public:
     bool open(Plugin& p, std::string& err);
     void close();
     bool isOpen() const { return hwnd_ != nullptr; }
+    // Hides/shows the window. Hidden, it gets no paint messages, so a software-rasterized editor
+    // stops burning CPU while the phone's editor screen is not on (the plugin stays loaded).
+    void setVisible(bool visible);
     // Follows resize requests from the plugin; returns false if the window was closed (WM_CLOSE).
     bool poll();
     int width() const { return w_; }

@@ -46,6 +46,11 @@ case "${1:-}" in
         [ "$(id -u)" = 0 ] || { echo "run 'setup' as root (wsl -u root)"; exit 1; }
         fetch_tree
         cd "$W/glibc-packages"
+        # termux-packages' setup script targets Ubuntu "resolute" (its builder image); on 24.04
+        # (noble) the same packages exist under the release's own names.
+        if [ "$(. /etc/os-release && echo "$VERSION_CODENAME")" = noble ]; then
+            sed -i -e 's/resolute/noble/g' -e 's/python3\.14-venv/python3-venv/g' -e 's/python3\.14/python3/g' scripts/setup-ubuntu.sh
+        fi
         ./scripts/setup-ubuntu.sh
         ;;
     tools)

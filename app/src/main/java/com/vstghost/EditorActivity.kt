@@ -109,8 +109,16 @@ class EditorActivity : Activity() {
         }
     }
 
-    override fun onResume() { super.onResume(); view.start() }
-    override fun onPause() { super.onPause(); view.stop() }
+    override fun onResume() {
+        super.onResume(); view.start()
+        if (opened) thread(name = "editor-show") { Bridge.get(this, slot).request("editor_visible\n1", 5_000) }
+    }
+    override fun onPause() {
+        super.onPause(); view.stop()
+        // Screen off or another app in front: hide the Wine window so the editor stops rendering
+        // (Direct2D editors cost about two cores while they paint). It is shown again on resume.
+        if (opened && !isFinishing) thread(name = "editor-hide") { Bridge.get(this, slot).request("editor_visible\n0", 5_000) }
+    }
 
     override fun onDestroy() {
         super.onDestroy()

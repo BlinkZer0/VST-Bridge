@@ -130,9 +130,9 @@ class PlayerActivity : AppCompatActivity() {
             setStatus("Preparing Wine…")
             if (payload.needsInstall()) {
                 setStatus("Installing the Windows runtime…")
-                val r = payload.install(null)
+                val r = installWithProgress()
                 if (!r.ok) { setStatus("Runtime install failed: ${r.message}"); return@execute }
-            }
+            } else ui.post { maybeOnboard() }
             if (payload.isPlay && !payload.shimReady()) payload.buildShim()
             Phase1(this) {}.syncPluginsPublic()
             ui.post { refreshPlugins() }
@@ -328,6 +328,9 @@ class PlayerActivity : AppCompatActivity() {
                 menu.add("Instrument sets…").setOnMenuItemClickListener { showSets(); true }
                 menu.add("Install plugin…").setOnMenuItemClickListener { installFromFolders(); true }
                 menu.add("Uninstall plugin…").setOnMenuItemClickListener { uninstallPlugin(); true }
+                menu.add("MIDI settings…").setOnMenuItemClickListener { midiSettings(); true }
+                menu.add("Report a problem…").setOnMenuItemClickListener { reportProblem(); true }
+                menu.add("About").setOnMenuItemClickListener { startActivity(Intent(this@PlayerActivity, AboutActivity::class.java)); true }
                 menu.add("Stats").setOnMenuItemClickListener { statsPanel.visibility = if (statsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE; true }
                 menu.add("Tests").setOnMenuItemClickListener { startActivity(Intent(this@PlayerActivity, MainActivity::class.java)); true }
             }.show()
@@ -477,6 +480,88 @@ class PlayerActivity : AppCompatActivity() {
                 else -> { SlotManager.assign(s, null); refreshSlots() }
             }
         }.show()
+    }
+
+    // ------------------------------------------------------------------ first start
+
+    /** The runtime unpacks for about a minute on the first start (and after updates): say so, with progress. */
+    private fun installWithProgress(): Payload.InstallResult {
+        val bar = com.google.android.material.progressindicator.LinearProgressIndicator(this).apply { max = 1000; isIndeterminate = true }
+        val text = TextView(this).apply { text = "Unpacking the Windows runtime (Wine). This happens once, and again after an app update.\nAbout a minute…"; setPadding(dp(24), dp(8), dp(24), dp(8)) }
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(text); addView(bar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(6)).apply { leftMargin = dp(24); rightMargin = dp(24); bottomMargin = dp(16) }) }
+        val dialog = MaterialAlertDialogBuilder(this).setTitle("Setting up").setView(box).setCancelable(false).create()
+        ui.post { if (!isFinishing) dialog.show() }
+        val r = payload.install { done, total ->
+            if (total > 0) ui.post { bar.isIndeterminate = false; bar.setProgressCompat((done * 1000 / total).toInt(), true) }
+            true
+        }
+        ui.post {
+            dialog.dismiss()
+            if (!r.ok) MaterialAlertDialogBuilder(this).setTitle("Setup failed").setMessage(r.message)
+                .setPositiveButton("Retry") { _, _ -> recreate() }.setNegativeButton("Report a problem") { _, _ -> reportProblem() }.show()
+            else maybeOnboard()
+        }
+        return r
+    }
+
+    /** One card on the first start: what the app is and where to begin. */
+    private fun maybeOnboard() {
+        val p = getSharedPreferences("player", MODE_PRIVATE)
+        if (p.getBoolean("onboarded", false)) return
+        MaterialAlertDialogBuilder(this).setTitle("Welcome to VST gHost")
+            .setMessage("• Pick a plugin at the top and press Load: the bundled instruments are ready to play on the keyboard, or from a USB/Bluetooth MIDI keyboard.\n\n" +
+                        "• Inst 1–4 are instruments, FX 1–4 an effect chain (left to right). Tap a slot to work on it, long-press for its menu.\n\n" +
+                        "• ⋮ → Install plugin… brings in Windows VST3 plugins from your Download folder or an SD card (zips, .vst3 files, installers).\n\n" +
+                        "• Editor opens a plugin's own window; Presets, the Mixer and Instrument sets are in the buttons and the ⋮ menu.")
+            .setPositiveButton("Got it") { _, _ -> p.edit().putBoolean("onboarded", true).apply() }
+            .setCancelable(false).show()
+    }
+
+    // ------------------------------------------------------------------ problem report, MIDI settings
+
+    private fun reportProblem() {
+        val input = android.widget.EditText(this).apply { hint = "What happened? (optional)"; minLines = 2; setPadding(dp(20), dp(12), dp(20), dp(12)) }
+        MaterialAlertDialogBuilder(this).setTitle("Report a problem")
+            .setMessage("A zip with the app's version, your device model, the plugin list, the slots' recent host output and the app's recent log lines is prepared and handed to the share sheet. Nothing is sent automatically.")
+            .setView(input)
+            .setPositiveButton("Prepare report") { _, _ ->
+                setStatus("Preparing the report…")
+                io.execute {
+                    val f = runCatching { ProblemReport.build(this, input.text.toString()) }
+                    ui.post {
+                        f.onSuccess { setStatus("Report ready: ${it.name}"); ProblemReport.share(this, it) }
+                         .onFailure { setStatus("Could not build the report: ${it.message}") }
+                    }
+                }
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun midiSettings() {
+        val s = midi?.settings ?: return
+        val chText = TextView(this).apply { textSize = 13f }
+        val channel = android.widget.SeekBar(this).apply { max = 16; progress = s.channel }
+        fun chLabel() { chText.text = "Input channel: " + if (channel.progress == 0) "all" else channel.progress.toString() }
+        chLabel()
+        channel.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, u: Boolean) { chLabel() }
+            override fun onStartTrackingTouch(sb: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {}
+        })
+        val route = com.google.android.material.materialswitch.MaterialSwitch(this).apply { text = "Route by channel: channel 1 → Inst 1 … 4 → Inst 4"; isChecked = s.routeByChannel }
+        val curves = listOf("linear", "soft", "hard", "fixed")
+        val group = android.widget.RadioGroup(this).apply { orientation = android.widget.RadioGroup.HORIZONTAL }
+        for ((i, c) in curves.withIndex()) group.addView(android.widget.RadioButton(this).apply { id = 100 + i; text = c; isChecked = s.velocity == c })
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0)
+            addView(chText); addView(channel); addView(route)
+            addView(TextView(this@PlayerActivity).apply { text = "Velocity curve"; textSize = 13f; setPadding(0, dp(10), 0, 0) }); addView(group)
+        }
+        MaterialAlertDialogBuilder(this).setTitle("MIDI settings").setView(box)
+            .setPositiveButton("OK") { _, _ ->
+                s.channel = channel.progress; s.routeByChannel = route.isChecked
+                s.velocity = curves.getOrElse(group.checkedRadioButtonId - 100) { "linear" }
+                setStatus("MIDI: ${s.describe()}")
+            }.setNegativeButton("Cancel", null).show()
     }
 
     // ------------------------------------------------------------------ mixer

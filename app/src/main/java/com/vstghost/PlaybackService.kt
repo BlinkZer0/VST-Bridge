@@ -27,6 +27,43 @@ class PlaybackService : Service() {
         private const val NOTIFICATION_ID = 1
         const val ACTION_STOP = "com.vstghost.action.STOP"
 
+        // Audio focus: a phone call or another player taking the output mutes the master until focus
+        // returns; the plugins stay loaded. Requested while any slot runs, abandoned after the last unload.
+        private var focusRequest: android.media.AudioFocusRequest? = null
+        private var ducked = false
+        private fun masterGain(ctx: Context): Float {
+            val p = ctx.getSharedPreferences("mixer", Context.MODE_PRIVATE)
+            val db = p.getFloat("db-1", 0f)
+            return if (p.getBoolean("mute-1", false) || db <= -60f) 0f else Math.pow(10.0, db / 20.0).toFloat()
+        }
+        private fun ensureFocus(ctx: Context) {
+            if (focusRequest != null) return
+            val am = ctx.getSystemService(android.media.AudioManager::class.java) ?: return
+            val attrs = android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC).build()
+            val req = android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(attrs).setWillPauseWhenDucked(false)
+                .setOnAudioFocusChangeListener { change ->
+                    when (change) {
+                        android.media.AudioManager.AUDIOFOCUS_GAIN -> { ducked = false; NativeEngine.setGain(masterGain(ctx)) }
+                        android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> { ducked = true; NativeEngine.setGain(masterGain(ctx) * 0.25f) }
+                        else -> {   // LOSS, LOSS_TRANSIENT: silence and release held notes
+                            ducked = true
+                            NativeEngine.setGain(0f)
+                            for (s in Bridge.activeSlots()) { NativeEngine.sendMidi(s, 0xB0, 64, 0); NativeEngine.sendMidi(s, 0xB0, 123, 0) }
+                        }
+                    }
+                }.build()
+            if (am.requestAudioFocus(req) == android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED) focusRequest = req
+        }
+        private fun abandonFocus(ctx: Context) {
+            val req = focusRequest ?: return
+            ctx.getSystemService(android.media.AudioManager::class.java)?.abandonAudioFocusRequest(req)
+            focusRequest = null
+            if (ducked) { ducked = false; NativeEngine.setGain(masterGain(ctx)) }
+        }
+
         fun update(context: Context) {
             val ctx = context.applicationContext
             val names = Bridge.activeSlots().map { s ->
@@ -35,8 +72,10 @@ class PlaybackService : Service() {
             }
             val intent = Intent(ctx, PlaybackService::class.java)
             if (names.isEmpty()) {
+                abandonFocus(ctx)
                 ctx.stopService(intent)
             } else {
+                ensureFocus(ctx)
                 intent.putExtra("text", names.joinToString(" · "))
                 runCatching { ctx.startForegroundService(intent) }
                     .onFailure { Log.w(TAG, "playback service: $it") }

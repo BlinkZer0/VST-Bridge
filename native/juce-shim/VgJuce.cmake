@@ -353,3 +353,6 @@ endfunction()
 foreach(f clap_juce_extensions_plugin juce_add_lv2_plugin)
     cmake_language(EVAL CODE "function(${f})\nendfunction()")
 endforeach()
+
+# Projucer (.jucer) projects.
+include(${CMAKE_CURRENT_LIST_DIR}/VgJucer.cmake)

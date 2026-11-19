@@ -17,6 +17,28 @@ import android.util.Log
  * NOT TESTED ON A DEVICE YET: no MIDI keyboard was available during Phase 2.
  */
 class MidiInput(context: Context, private val onStatus: (String) -> Unit) {
+    /**
+     * Settings (⋮ → MIDI settings…): [channel] 0 = all channels, 1–16 = only that one;
+     * [routeByChannel] sends channel N to instrument slot N (1–4) instead of the played slots;
+     * [velocity] "linear" | "soft" | "hard" | "fixed" (fixed = 100).
+     */
+    class Settings(ctx: Context) {
+        private val p = ctx.getSharedPreferences("midi", Context.MODE_PRIVATE)
+        var channel: Int get() = p.getInt("channel", 0); set(v) { p.edit().putInt("channel", v).apply() }
+        var routeByChannel: Boolean get() = p.getBoolean("route", false); set(v) { p.edit().putBoolean("route", v).apply() }
+        var velocity: String get() = p.getString("velocity", "linear")!!; set(v) { p.edit().putString("velocity", v).apply() }
+        fun describe() = (if (channel == 0) "all channels" else "channel $channel") +
+            (if (routeByChannel) ", channel → slot" else "") + (if (velocity != "linear") ", $velocity velocity" else "")
+    }
+    val settings = Settings(context)
+
+    private fun curve(v: Int): Int = when (settings.velocity) {
+        "soft" -> Math.round(127.0 * Math.pow(v / 127.0, 0.6)).toInt().coerceIn(1, 127)
+        "hard" -> Math.round(127.0 * Math.pow(v / 127.0, 1.6)).toInt().coerceIn(1, 127)
+        "fixed" -> 100
+        else -> v
+    }
+
     private val mm = context.getSystemService(MidiManager::class.java)
     private val open = HashMap<Int, Pair<MidiDevice, List<MidiOutputPort>>>()
     private val handler = Handler(Looper.getMainLooper())
@@ -34,8 +56,15 @@ class MidiInput(context: Context, private val onStatus: (String) -> Unit) {
                 val len = if ((status and 0xF0) == 0xC0 || (status and 0xF0) == 0xD0) 1 else 2
                 if (i + len > end) break
                 val d1 = msg[i].toInt() and 0x7F
-                val d2 = if (len == 2) msg[i + 1].toInt() and 0x7F else 0
-                NativeEngine.sendMidi(status, d1, d2)
+                var d2 = if (len == 2) msg[i + 1].toInt() and 0x7F else 0
+                val ch = (status and 0x0F) + 1
+                val kind = status and 0xF0
+                if (settings.channel == 0 || settings.channel == ch) {
+                    if (kind == 0x90 && d2 > 0) d2 = curve(d2)
+                    if (settings.routeByChannel) {
+                        if (ch in 1..SlotManager.COUNT) NativeEngine.sendMidi(SlotManager.FIRST_INST + ch - 1, status, d1, d2)
+                    } else NativeEngine.sendMidi(status, d1, d2)
+                }
                 if ((status and 0xF0) == 0x90 && d2 > 0) Log.i(TAG, "MIDI in: note on $d1 vel $d2 ch ${(status and 0x0F) + 1}")
                 i += len
             }

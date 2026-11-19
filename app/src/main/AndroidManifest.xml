@@ -59,6 +59,18 @@
             android:exported="true"
             android:launchMode="singleTop" />
 
+        <activity android:name=".AboutActivity" android:exported="false" android:theme="@style/Theme.VstGhost"
+            android:label="About VST gHost" />
+
+        <!-- Problem reports are zipped into the cache folder and handed to the share sheet. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Keeps the engine alive in the background while a plugin is loaded (notification with Stop). -->
         <service
             android:name=".PlaybackService"
