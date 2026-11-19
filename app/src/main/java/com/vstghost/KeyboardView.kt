@@ -13,7 +13,7 @@ import android.view.View
  * Multi-touch piano keyboard. Velocity comes from the touch position along the key
  * (near the top = soft, near the front edge = loud). Sliding across keys plays a glissando.
  */
-class KeyboardView(context: Context) : View(context) {
+class KeyboardView @JvmOverloads constructor(context: Context, attrs: android.util.AttributeSet? = null) : View(context, attrs) {
     var firstOctave = 3          // C3 = MIDI 48
         set(v) { field = v.coerceIn(0, 8); invalidate() }
     var octaves = 2

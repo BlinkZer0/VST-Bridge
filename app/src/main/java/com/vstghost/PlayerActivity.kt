@@ -1,8 +1,10 @@
 ﻿// SPDX-License-Identifier: GPL-3.0-or-later
 package com.vstghost
 
-import android.app.Activity
-import android.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
@@ -39,7 +41,7 @@ import java.util.concurrent.Executors
  * on that bus (engine.cpp). One slot is selected at a time: the keyboard, USB MIDI, the parameter
  * list, presets and the Editor button act on it.
  */
-class PlayerActivity : Activity() {
+class PlayerActivity : AppCompatActivity() {
     companion object {
         private const val REQ_IMPORT_FILE = 41
         private const val REQ_IMPORT_TREE = 42
@@ -61,7 +63,8 @@ class PlayerActivity : Activity() {
     private lateinit var header: TextView
     private lateinit var status: TextView
     private lateinit var midiStatus: TextView
-    private lateinit var pluginSpinner: Spinner
+    private lateinit var pluginPicker: MaterialAutoCompleteTextView
+    private var selectedPlugin = 0
     private lateinit var keyboard: KeyboardView
     private lateinit var paramList: ListView
     private lateinit var statsView: TextView
@@ -70,7 +73,7 @@ class PlayerActivity : Activity() {
     private lateinit var fxInputBtn: Button
     private lateinit var restartBtn: Button
     private lateinit var loadBtn: Button
-    private val slotBtns = HashMap<Int, Button>()
+    private val slotBtns = HashMap<Int, MaterialButton>()
 
     private var plugins: List<File> = emptyList()
     private var params: List<Param> = emptyList()
@@ -145,7 +148,7 @@ class PlayerActivity : Activity() {
     // ------------------------------------------------------------------ add plugins (import)
 
     private fun addPluginDialog() {
-        AlertDialog.Builder(this).setTitle("Add a Windows VST3 plugin")
+        MaterialAlertDialogBuilder(this).setTitle("Add a Windows VST3 plugin")
             .setItems(arrayOf("A .vst3 file or a .zip download", "A .vst3 folder (bundle)")) { _, which ->
                 if (which == 0) startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
@@ -206,139 +209,95 @@ class PlayerActivity : Activity() {
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     private fun buildUi() {
-        // Landscape phone is only ~380 dp tall: compact top bar, the slot strip (Inst 1–4 / FX 1–4),
-        // a split middle (parameters | controls + stats) that gets all remaining height, keyboard at
-        // the bottom.
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), dp(4), dp(8), dp(4))
-            fitsSystemWindows = true
-        }
-        fun row() = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        fun btn(label: String, parent: ViewGroup, weight: Float = 0f, action: () -> Unit) = Button(this).apply {
-            text = label; isAllCaps = false; textSize = 13f; minHeight = 0; minimumHeight = 0
-            setPadding(dp(10), dp(4), dp(10), dp(4))
-            setOnClickListener { action() }
-            parent.addView(this, if (weight > 0) LinearLayout.LayoutParams(0, dp(40), weight) else LinearLayout.LayoutParams(WRAP_CONTENT, dp(40)))
-        }
+        setContentView(R.layout.activity_player)
+        pluginPicker = findViewById(R.id.pluginPicker)
+        pluginPicker.setOnItemClickListener { _, _, pos, _ -> selectedPlugin = pos }
+        header = findViewById(R.id.header)
+        status = findViewById(R.id.status)
+        midiStatus = findViewById(R.id.midiStatus)
+        keyboard = findViewById(R.id.keyboard)
+        paramList = findViewById(R.id.paramList)
+        statsView = findViewById(R.id.statsView)
+        statsPanel = findViewById(R.id.statsPanel)
+        sustainBtn = findViewById(R.id.sustainBtn)
+        fxInputBtn = findViewById(R.id.fxInputBtn)
+        restartBtn = findViewById(R.id.restartBtn)
+        loadBtn = findViewById(R.id.loadBtn)
 
-        val top = row()
-        pluginSpinner = Spinner(this)
-        top.addView(pluginSpinner, LinearLayout.LayoutParams(0, dp(40), 1f))
-        loadBtn = btn("Load → Inst 1", top) { loadSelected() }
-        btn("Add", top) { addPluginDialog() }
-        btn("Editor", top) {
+        loadBtn.setOnClickListener { loadSelected() }
+        findViewById<Button>(R.id.addBtn).setOnClickListener { addPluginDialog() }
+        findViewById<Button>(R.id.editorBtn).setOnClickListener {
             if (!bridge.isRunning) android.widget.Toast.makeText(this, "Load a plugin into ${slotName(current)} first", android.widget.Toast.LENGTH_SHORT).show()
             else if (bridge.isNativeLoaded)
                 startActivity(Intent(this, NativeEditorActivity::class.java).putExtra(EditorActivity.EXTRA_SLOT, current))
             else startActivity(Intent(this, EditorActivity::class.java).putExtra(EditorActivity.EXTRA_SLOT, current))
         }
-        btn("Unload", top) { unloadCurrent() }
-        btn("Presets", top) { presets() }
-        btn("Stats", top) { statsPanel.visibility = if (statsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE }
-        btn("Tests", top) { startActivity(Intent(this, MainActivity::class.java)) }
-        root.addView(top)
+        findViewById<Button>(R.id.unloadBtn).setOnClickListener { unloadCurrent() }
+        findViewById<Button>(R.id.presetsBtn).setOnClickListener { presets() }
+        findViewById<Button>(R.id.moreBtn).setOnClickListener { v ->
+            android.widget.PopupMenu(this, v).apply {
+                menu.add("Stats").setOnMenuItemClickListener { statsPanel.visibility = if (statsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE; true }
+                menu.add("Tests").setOnMenuItemClickListener { startActivity(Intent(this@PlayerActivity, MainActivity::class.java)); true }
+            }.show()
+        }
+        restartBtn.setOnClickListener { restartAfterCrash() }
 
-        // The slot strip: two rows of four. Tapping a slot selects it; its plugin name is shown.
-        fun slotRow(title: String, slots: IntRange): LinearLayout = row().apply {
-            addView(TextView(this@PlayerActivity).apply {
-                text = title; textSize = 12f; setTypeface(typeface, Typeface.BOLD); setTextColor(Color.GRAY)
-                setPadding(0, 0, dp(6), 0)
-            }, LinearLayout.LayoutParams(dp(78), WRAP_CONTENT))
+        // The slot strip: tapping a slot selects it, long-press for its menu.
+        fun slotRow(rowId: Int, slots: IntRange) {
+            val row = findViewById<LinearLayout>(rowId)
             for (s in slots) {
-                val b = Button(this@PlayerActivity).apply {
-                    isAllCaps = false; textSize = 11f; minHeight = 0; minimumHeight = 0; maxLines = 1
-                    setPadding(dp(4), 0, dp(4), 0)
-                    setOnClickListener { selectSlot(s) }
+                val b = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                    setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
+                    isAllCaps = false; textSize = 12f; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                    minHeight = 0; minimumHeight = 0; insetTop = dp(1); insetBottom = dp(1)
+                    setPadding(dp(8), 0, dp(8), 0)
+                    isCheckable = true
+                    setOnClickListener { isChecked = true; selectSlot(s) }
                     setOnLongClickListener { slotMenu(s); true }
                 }
                 slotBtns[s] = b
-                addView(b, LinearLayout.LayoutParams(0, dp(34), 1f))
+                row.addView(b, LinearLayout.LayoutParams(0, dp(34), 1f).apply { leftMargin = dp(3); rightMargin = dp(3) })
             }
         }
-        root.addView(slotRow("Instruments", INST_SLOTS))
-        root.addView(slotRow("Effects →", FX_SLOTS))
+        slotRow(R.id.instRow, INST_SLOTS)
+        slotRow(R.id.fxRow, FX_SLOTS)
 
-        header = TextView(this).apply { textSize = 16f; setTypeface(typeface, Typeface.BOLD); text = "No plugin loaded" }
-        root.addView(header)
-        status = TextView(this).apply { textSize = 12f; maxLines = 2 }
-        root.addView(status)
-        restartBtn = Button(this).apply {
-            text = "Restart plugin (restores its last state)"; isAllCaps = false; visibility = View.GONE
-            setOnClickListener { restartAfterCrash() }
-        }
-        root.addView(restartBtn)
-
-        val middle = row().apply { gravity = Gravity.TOP }
-        val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), 0, 0, 0) }
-        middle.addView(left, LinearLayout.LayoutParams(0, MATCH_PARENT, 3f))
-        middle.addView(right, LinearLayout.LayoutParams(0, MATCH_PARENT, 2f))
-        root.addView(middle, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
-
-        val ctl = row()
-        sustainBtn = btn("Sustain: off", ctl, 1.4f) {
+        sustainBtn.setOnClickListener {
             sustain = !sustain
             NativeEngine.sendMidi(0xB0, 64, if (sustain) 127 else 0)
-            sustainBtn.text = "Sustain: ${if (sustain) "ON" else "off"}"
+            (sustainBtn as MaterialButton).isChecked = sustain
         }
-        btn("Oct −", ctl, 1f) { keyboard.allOff(); keyboard.firstOctave -= 1 }
-        btn("Oct +", ctl, 1f) { keyboard.allOff(); keyboard.firstOctave += 1 }
-        right.addView(ctl)
-        val ctl2 = row()
-        fxInputBtn = btn("FX input: instruments", ctl2, 1f) {
+        findViewById<Button>(R.id.octDownBtn).setOnClickListener { keyboard.allOff(); keyboard.firstOctave -= 1 }
+        findViewById<Button>(R.id.octUpBtn).setOnClickListener { keyboard.allOff(); keyboard.firstOctave += 1 }
+        fxInputBtn.setOnClickListener {
             fxTestSignal = !fxTestSignal
             NativeEngine.setFxInput(if (fxTestSignal) 1 else 0)
-            fxInputBtn.text = "FX input: ${if (fxTestSignal) "test signal" else "instruments"}"
+            fxInputBtn.text = "FX: ${if (fxTestSignal) "test" else "inst"}"
         }
-        right.addView(ctl2)
-        midiStatus = TextView(this).apply { textSize = 11f; setTextColor(Color.GRAY) }
-        right.addView(midiStatus)
 
-        statsPanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
-        val cfg = row()
-        val blockSpin = Spinner(this).apply {
+        val blockSpin = findViewById<Spinner>(R.id.blockSpin).apply {
             adapter = ArrayAdapter(this@PlayerActivity, android.R.layout.simple_spinner_dropdown_item, listOf("block 128", "block 256", "block 512"))
             setSelection(1)
         }
-        val fillSpin = Spinner(this).apply {
+        val fillSpin = findViewById<Spinner>(R.id.fillSpin).apply {
             adapter = ArrayAdapter(this@PlayerActivity, android.R.layout.simple_spinner_dropdown_item, (1..8).map { "buffer ×$it" })
             setSelection(1)
         }
-        cfg.addView(blockSpin, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        cfg.addView(fillSpin, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        btn("Apply", cfg) {
+        findViewById<Button>(R.id.applyBtn).setOnClickListener {
             block = listOf(128, 256, 512)[blockSpin.selectedItemPosition]
             fillBlocks = fillSpin.selectedItemPosition + 1
             if (loadedName != null) restart(keepState = true)
         }
-        statsPanel.addView(cfg)
-        val tools = row()
-        btn("Latency test", tools, 1f) { latencyTest() }
-        btn("Reset stats", tools, 1f) { NativeEngine.resetStats() }
-        statsPanel.addView(tools)
-        statsView = TextView(this).apply { typeface = Typeface.MONOSPACE; textSize = 10f }
-        statsPanel.addView(android.widget.ScrollView(this).apply { addView(statsView) })
-        right.addView(statsPanel, LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        findViewById<Button>(R.id.latencyBtn).setOnClickListener { latencyTest() }
+        findViewById<Button>(R.id.resetStatsBtn).setOnClickListener { NativeEngine.resetStats() }
 
-        val search = EditText(this).apply {
-            hint = "Search parameters"; inputType = InputType.TYPE_CLASS_TEXT; textSize = 13f; minHeight = 0
-            setPadding(dp(6), dp(4), dp(6), dp(4))
-            addTextChangedListener(object : TextWatcher {
-                override fun afterTextChanged(s: Editable?) { filter = s.toString().trim().lowercase(); adapter.notifyDataSetChanged() }
-                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            })
-        }
-        left.addView(search, LinearLayout.LayoutParams(MATCH_PARENT, dp(36)))
-        paramList = ListView(this).apply { adapter = this@PlayerActivity.adapter }
-        left.addView(paramList, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
-
-        keyboard = KeyboardView(this).apply {
-            onNote = { note, vel, on -> NativeEngine.sendMidi(if (on) 0x90 else 0x80, note, vel) }
-        }
-        root.addView(keyboard, LinearLayout.LayoutParams(MATCH_PARENT, dp(120)))
-        setContentView(root)
+        findViewById<EditText>(R.id.search).addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) { filter = s.toString().trim().lowercase(); adapter.notifyDataSetChanged() }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        paramList.adapter = adapter
+        keyboard.onNote = { note, vel, on -> NativeEngine.sendMidi(if (on) 0x90 else 0x80, note, vel) }
     }
 
     private fun setStatus(s: String) = ui.post { status.text = s }
@@ -357,30 +316,24 @@ class PlayerActivity : Activity() {
                 ?.filter { it.name.endsWith(".vst3") && it.nameWithoutExtension.lowercase() !in nativeNames }
                 ?.sortedBy { it.name.lowercase() }.orEmpty()
         val names = plugins.map { NativePlugins.displayName(it) }.ifEmpty { listOf("(no plugins: press Add)") }
-        pluginSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, names).apply {
-            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        }
-        pluginSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {}
-            override fun onNothingSelected(p: AdapterView<*>?) {}
-        }
+        pluginPicker.setAdapter(ArrayAdapter(this, R.layout.item_plugin, names))
+        selectedPlugin = selectedPlugin.coerceIn(0, (plugins.size - 1).coerceAtLeast(0))
+        pluginPicker.setText(names[selectedPlugin.coerceAtMost(names.size - 1)], false)
     }
 
     // ------------------------------------------------------------------ slots
 
-    /** What a slot shows: the running plugin, else the stored assignment (for other apps), else empty. */
+    /** What a slot shows: its loaded plugin, or empty. (Loading also assigns the slot for other apps.) */
     private fun slotText(s: Int): String {
         val b = Bridge.get(this, s)
         val name = b.plugin?.let { NativePlugins.displayName(it).removeSuffix(" · native") }
-            ?: SlotManager.assigned(s)?.let { a -> plugins.firstOrNull { it.nameWithoutExtension == a }?.let { NativePlugins.displayName(it).removeSuffix(" · native") } ?: a }
         return "${slotName(s)}: ${name ?: "—"}" + if (b.plugin != null && !b.isRunning) " ✗" else ""
     }
 
     private fun refreshSlots() {
         for ((s, b) in slotBtns) {
             b.text = slotText(s)
-            b.setTypeface(null, if (s == current) Typeface.BOLD else Typeface.NORMAL)
-            b.alpha = if (s == current) 1f else 0.7f
+            b.isChecked = s == current
         }
         loadBtn.text = "Load → ${slotName(current)}"
     }
@@ -402,8 +355,11 @@ class PlayerActivity : Activity() {
         val b = Bridge.get(this, s)
         val items = mutableListOf("Load the selected plugin here")
         if (b.isRunning) items += listOf("Editor", "Unload")
-        if (SlotManager.assigned(s) != null) items += "Clear the assignment (other apps)"
-        AlertDialog.Builder(this).setTitle("${SlotManager.label(s)}").setItems(items.toTypedArray()) { _, which ->
+        SlotManager.assigned(s)?.takeIf { b.plugin == null }?.let { a ->
+            val shown = plugins.firstOrNull { it.nameWithoutExtension == a }?.let { NativePlugins.displayName(it) } ?: a
+            items += "Other apps still see \"$shown\" here: clear"
+        }
+        MaterialAlertDialogBuilder(this).setTitle("${SlotManager.label(s)}").setItems(items.toTypedArray()) { _, which ->
             when (items[which]) {
                 "Load the selected plugin here" -> loadSelected()
                 "Editor" -> startActivity(Intent(this, if (b.isNativeLoaded) NativeEditorActivity::class.java else EditorActivity::class.java).putExtra(EditorActivity.EXTRA_SLOT, s))
@@ -419,6 +375,7 @@ class PlayerActivity : Activity() {
         io.execute {
             Bridge.get(this, s).stop()
             mine.remove(s)
+            SlotManager.assign(s, null)  // empty for other apps too
             ui.post { refreshSlots(); selectSlot(s); setStatus("${slotName(s)} unloaded.") }
         }
     }
@@ -426,7 +383,7 @@ class PlayerActivity : Activity() {
     // ------------------------------------------------------------------ plugin lifecycle
 
     private fun loadSelected() {
-        val f = plugins.getOrNull(pluginSpinner.selectedItemPosition) ?: return
+        val f = plugins.getOrNull(selectedPlugin) ?: return
         keyboard.allOff()
         restartBtn.visibility = View.GONE
         lastStates.remove(current)
@@ -437,7 +394,8 @@ class PlayerActivity : Activity() {
     private fun loadByName(name: String) {
         val i = plugins.indexOfFirst { it.nameWithoutExtension == name }
         if (i < 0) { setStatus("No plugin named \"$name\"."); return }
-        pluginSpinner.setSelection(i)
+        selectedPlugin = i
+        pluginPicker.setText(NativePlugins.displayName(plugins[i]), false)
         keyboard.allOff()
         restartBtn.visibility = View.GONE
         lastStates.remove(current)
@@ -557,7 +515,7 @@ class PlayerActivity : Activity() {
             }
             val header = row.getChildAt(0) as LinearLayout
             (header.getChildAt(0) as TextView).text = p.title
-            (header.getChildAt(1) as TextView).text = "${p.text} ${p.units}".trim()
+            (header.getChildAt(1) as TextView).text = if (p.units.isNotEmpty() && p.text.trim().endsWith(p.units)) p.text.trim() else "${p.text} ${p.units}".trim()
             val bar = row.getChildAt(1) as SeekBar
             bar.setOnSeekBarChangeListener(null)
             val max = if (p.steps in 1..1000) p.steps else 1000
@@ -626,7 +584,7 @@ class PlayerActivity : Activity() {
             setStatus(if (items.isEmpty()) "No factory presets found for $name." else "${items.size} presets.")
             ui.post {
                 val labels = (listOf("＋ Save current sound as…") + items.map { it.label }).toTypedArray()
-                AlertDialog.Builder(this).setTitle("Presets: $name").setItems(labels) { _, which ->
+                MaterialAlertDialogBuilder(this).setTitle("Presets: $name").setItems(labels) { _, which ->
                     if (which == 0) savePreset() else items[which - 1].action()
                 }.show()
             }
@@ -660,7 +618,7 @@ class PlayerActivity : Activity() {
     private fun savePreset() {
         val input = EditText(this).apply { hint = "Name" }
         val slot = current
-        AlertDialog.Builder(this).setTitle("Save preset").setView(input).setPositiveButton("Save") { _, _ ->
+        MaterialAlertDialogBuilder(this).setTitle("Save preset").setView(input).setPositiveButton("Save") { _, _ ->
             val name = input.text.toString().trim().replace(Regex("[^A-Za-z0-9 _.-]"), "_").ifEmpty { "Preset" }
             io.execute {
                 val b = Bridge.get(this, slot)

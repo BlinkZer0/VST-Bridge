@@ -97,6 +97,9 @@ dependencies {
     implementation("org.androidaudioplugin:androidaudioplugin:0.12.0")
     // Phase 5: document-start scripts for native plugins' web UIs (JUCE's Android bridge setup).
     implementation("androidx.webkit:webkit:1.12.1")
+    // Player UI (Material 3 components, Apache-2.0).
+    implementation("com.google.android.material:material:1.12.0")
+    implementation("androidx.appcompat:appcompat:1.7.0")
 }
 
 kotlin {
