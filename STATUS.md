@@ -22,6 +22,8 @@ Still open from Phase 3: a third-party MIDI app playing our virtual device.
 | **No Strings and The Ham native** (JUCE 8 + WebView2 web UIs, blank under Wine): built from their local checkouts (`-Pvg.pluginSrcRoot`, local-only entries in native/CMakeLists.txt), load in 4–8 ms (53 / 143 parameters), web UI editors complete and interactive. Editors are no longer shrunk below their logical size (the zoom layout scales them instead), which stops web pages from clipping | 2026-11-19 |
 | **Imported Windows plugins**: Dexed (Direct2D editor complete, taps work), Pedal Faster Windows build (GDI editor), Surge XT (2081 parameters, OpenGL editor) — all with 0–1 underruns while the editor is open | Phase 5 |
 | **Free-VST3 corpus on the phone** (2026-11-19): 30/30 import, load and run (0 underruns), 25/25 editors with a GUI open — incl. Monique, Surge XT Effects, wolf-shaper, the Dragonflys and the OpenGL visualizers that failed or were untested before ([docs/compatibility.md](docs/compatibility.md)) | `tools/corpus/phone-triage.sh` |
+| **Background playing**: a media-playback foreground service ("VST gHost is playing", Stop action) runs while any slot has a plugin; verified: notification shown, process alive after leaving the screen, Stop unloads all slots. **Prefix data kept across updates** (users, ProgramData, Common Files/VST3; marker file survived a reinstall). **Meters on the slot cards + Master strip** in the mixer. **Installers** (.exe/.msi) run unattended under Wine from Install plugin… (code only, not yet exercised) | 2026-11-19 |
+| **Sideload edition re-test** (targetSdk 28 build, payload pushed to its external files dir): Dexed imports, plays (−9.1 dBFS, 0 underruns), Direct2D editor complete (12 s); Surge XT plays (−3.8 dBFS), OpenGL editor 2.3 s | 2026-11-19 |
 | **Mixer** (⋮ menu): eight strips (Inst 1–4, FX 1–4) with live peak meters (blue → teal → amber → red, peak hold), faders (−∞..+6 dB, mixer taper) and mutes; per-slot gain and meter live in the engine's audio callback; settings persist. **Uninstall plugin** (⋮ menu): removes an imported plugin's files after a confirmation, unloading it from any slot first. **App icon**: a ghost with headphones (adaptive vector icon, monochrome layer included) | 2026-11-19 |
 | **Install plugin** (⋮ menu): lists `.vst3` files/bundles and zips in Download, Documents, the storage root and SD cards (needs "All files access"; the app asks once and opens the settings page) and installs the tapped one. Verified: Dexed zip, No Strings and The Ham bundles from Download; `.exe`/`.msi`/`.7z` are listed as not installable | 2026-11-19 |
 
@@ -45,9 +47,7 @@ Still open from Phase 3: a third-party MIDI app playing our virtual device.
 - **AAP hosts showing our runtime parameter list:** not checked. **FX slots through AAP:** not exercised.
 - Editors: on-screen use not yet confirmed by a person; no keyboard input to plugins; WebView2 editors of bridged (Wine) plugins blank — the native builds of those plugins are the answer; editors not reachable from AAP hosts' UIs.
 - Odin2 native build (modal loops); Projucer-only projects; plugins that need their installer's data (Surge XT has no factory patches without it).
-- Sideload edition not re-tested in Phase 5.
 - Direct2D-era JUCE 8 editors cost about two cores while open (software rasterization of every presented frame).
-- No foreground service yet (background playing not guaranteed).
 - Touch latency and acoustic round trip: no hardware.
 
 ## Open questions / risks
@@ -56,7 +56,7 @@ Still open from Phase 3: a third-party MIDI app playing our virtual device.
 2. **Deviation:** glibc is Termux's prebuilt package; rebuild from source before a public release.
 3. The Play edition's loader path is primary-user only.
 4. **Deviation:** the x86_64 runtime libraries for Wine's Wayland driver/FreeType are copied from the Ubuntu 24.04 build host (versions in `x64libs/MANIFEST`), not built from source.
-5. The sideload edition now has minSdk 29 > targetSdk 28. It builds; reinstalling it on the phone hasn't been re-checked since the change.
+5. The sideload edition has minSdk 29 > targetSdk 28; reinstalled and re-checked 2026-11-19 (Dexed, Surge XT).
 
 ## Assumptions still to prove
 

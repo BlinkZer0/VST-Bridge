@@ -257,7 +257,7 @@ class PlayerActivity : AppCompatActivity() {
         super.onResume()
         // The Tests screen points the keyboard/MIDI at slot 0 while it runs; take it back.
         if (current in INST_SLOTS) NativeEngine.playerSlot = current
-        refreshSlots()   // the notification's Stop may have unloaded everything meanwhile
+        refreshSlots(); selectSlot(current)   // the notification's Stop may have unloaded everything meanwhile
         ui.removeCallbacks(meterTick); ui.post(meterTick)
     }
 
