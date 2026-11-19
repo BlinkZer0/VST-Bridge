@@ -32,6 +32,10 @@ object NativeEngine {
     @JvmStatic external fun setTargetFill(slot: Int, frames: Int)
     /** 0 = silence, 1 = built-in test signal (effects played in the app). */
     @JvmStatic external fun setInputMode(slot: Int, mode: Int)
+    /** 0 = instrument, 1 = effect: effects form a serial chain fed by the instruments (engine.cpp). */
+    @JvmStatic external fun setSlotKind(slot: Int, kind: Int)
+    /** What feeds the effect chain: 0 the instruments, 1 the built-in test signal. */
+    @JvmStatic external fun setFxInput(mode: Int)
     /** True while an AAP host reads this slot's audio (it is then left out of the Oboe mix). */
     @JvmStatic external fun setAapOwned(slot: Int, owned: Boolean)
     @JvmStatic external fun startProbe(slot: Int, note: Int, velocity: Int, thresholdDb: Float)
@@ -62,18 +66,24 @@ object NativeEngine {
     @JvmStatic external fun nativeEditorClose(slot: Int)
     @JvmStatic external fun resetStats(slot: Int)
 
-    // ---- slot-0 conveniences (player, tests)
-    fun hostState() = hostState(0)
-    fun lastResponse() = lastResponse(0)
-    fun request(req: String, timeoutMs: Int) = request(0, req, timeoutMs)
-    fun sendMidi(status: Int, d1: Int, d2: Int) = sendMidi(0, status, d1, d2)
-    fun setTargetFill(frames: Int) = setTargetFill(0, frames)
-    fun setInputMode(mode: Int) = setInputMode(0, mode)
-    fun startProbe(note: Int, velocity: Int, thresholdDb: Float) = startProbe(0, note, velocity, thresholdDb)
-    fun probeResult() = probeResult(0)
-    fun setVerifyPattern(on: Boolean) = setVerifyPattern(0, on)
-    fun resetStats() = resetStats(0)
-    fun statsNamed(slot: Int = 0) = Stats(stats(slot))
+    /**
+     * The slot the on-screen keyboard and USB MIDI play: the player's selected instrument slot.
+     * 0 (the test harness's slot) until the player picks one.
+     */
+    @Volatile var playerSlot = 0
+
+    // ---- conveniences for the player slot (tests leave it at 0)
+    fun hostState() = hostState(playerSlot)
+    fun lastResponse() = lastResponse(playerSlot)
+    fun request(req: String, timeoutMs: Int) = request(playerSlot, req, timeoutMs)
+    fun sendMidi(status: Int, d1: Int, d2: Int) = sendMidi(playerSlot, status, d1, d2)
+    fun setTargetFill(frames: Int) = setTargetFill(playerSlot, frames)
+    fun setInputMode(mode: Int) = setInputMode(playerSlot, mode)
+    fun startProbe(note: Int, velocity: Int, thresholdDb: Float) = startProbe(playerSlot, note, velocity, thresholdDb)
+    fun probeResult() = probeResult(playerSlot)
+    fun setVerifyPattern(on: Boolean) = setVerifyPattern(playerSlot, on)
+    fun resetStats() = resetStats(playerSlot)
+    fun statsNamed(slot: Int = playerSlot) = Stats(stats(slot))
 
     /** Named view of [stats]. */
     data class Stats(val v: DoubleArray) {

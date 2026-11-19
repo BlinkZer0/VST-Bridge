@@ -31,6 +31,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        NativeEngine.playerSlot = 0  // the tests drive slot 0 (the player moves it to its instrument slot)
         val pad = (12 * resources.displayMetrics.density).toInt()
 
         val col = LinearLayout(this).apply {

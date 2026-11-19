@@ -71,7 +71,8 @@ struct Slot {
     std::shared_ptr<BridgeClient> bridge;
     std::shared_ptr<NativeInstance> native;  // Phase 5: an in-process plugin instead of a bridge
     std::atomic<bool> aapOwned{false};
-    std::atomic<int> inputMode{0};  // 0 silence, 1 test signal (effects in the app)
+    std::atomic<int> inputMode{0};  // effects: 0 the FX chain (see onAudioReady), 1 the test signal
+    std::atomic<int> kind{0};       // 0 instrument, 1 effect (bridged plugins: set by Bridge.load)
     std::atomic<float> peak{0.0f};  // output peak since the last stats reset (app-mixed slots)
     // Adaptive fill state (touched only by the slot's current consumer thread).
     uint64_t lastUnderruns = 0;
@@ -136,6 +137,13 @@ public:
         if (stream_) stream_->setBufferSizeInFrames(stream_->getFramesPerBurst() * bufferBursts_);
     }
 
+    // Routing: every app-mixed instrument slot plays onto one bus; the app-mixed effect slots form
+    // a serial chain, in slot order, fed by that bus (or by the built-in test signal:
+    // fxSource_ = 1, or per effect: inputMode = 1); the chain's end goes to the output.
+    //   instruments ──Σ──▶ FX a ──▶ FX b ──▶ ... ──▶ output
+    // A slot is an instrument or an effect by its `kind` (native plugins know it themselves).
+    // Bridged effects run in their own process a few blocks behind their input; the chain tolerates
+    // that (it is the same as before, just fed by instruments instead of silence).
     oboe::DataCallbackResult onAudioReady(oboe::AudioStream* s, void* data, int32_t frames) override {
         const int64_t t0 = nowNs();
         float* out = static_cast<float*>(data);
@@ -143,47 +151,59 @@ public:
         memset(mixL_, 0, n * 4); memset(mixR_, 0, n * 4);
         const uint32_t routeBuf = (uint32_t)std::max<int32_t>(s->getBufferSizeInFrames(), frames);
         bool testFilled = false;
+        auto testSignal = [&] { if (!testFilled) { test_.fill(inL_, inR_, n); testFilled = true; } };
+        auto isEffect = [&](Slot& sl, const std::shared_ptr<NativeInstance>& nat) {
+            return nat ? !nat->instrument() : sl.kind.load(std::memory_order_relaxed) == 1;
+        };
+        auto addPeak = [&](Slot& sl) {
+            float pk = sl.peak.load(std::memory_order_relaxed);
+            for (uint32_t k = 0; k < n; ++k) pk = std::max(pk, std::fabs(l_[k]));
+            sl.peak.store(pk, std::memory_order_relaxed);
+        };
+        // Pass 1: instruments onto the bus (mixL_/mixR_).
         for (int i = 0; i < kSlots; ++i) {
             Slot& sl = slots[i];
             if (sl.aapOwned.load(std::memory_order_relaxed)) continue;
-            if (auto nat = std::atomic_load(&sl.native)) {
-                const float* inL = nullptr;
-                const float* inR = nullptr;
-                if (!nat->instrument()) {
-                    if (sl.inputMode.load(std::memory_order_relaxed) == 1) {
-                        if (!testFilled) { test_.fill(inL_, inR_, n); testFilled = true; }
-                        inL = inL_; inR = inR_;
-                    } else {
-                        inL = zero_; inR = zero_;
-                    }
-                }
+            auto nat = std::atomic_load(&sl.native);
+            if (isEffect(sl, nat)) continue;
+            if (nat) {
+                nat->process(nullptr, nullptr, l_, r_, n);
+            } else {
+                auto b = std::atomic_load(&sl.bridge);
+                if (!b || b->hostState() != VG_HOST_RUNNING) continue;
+                ensureSlotFill(i, *b, n, routeBuf);
+                b->read(l_, r_, n);
+                b->wakeHost();
+            }
+            for (uint32_t k = 0; k < n; ++k) { mixL_[k] += l_[k]; mixR_[k] += r_[k]; }
+            addPeak(sl);
+        }
+        // Pass 2: the effect chain. chainL_/chainR_ carry the signal from stage to stage.
+        if (fxSource_.load(std::memory_order_relaxed) == 1) { testSignal(); memcpy(chainL_, inL_, n * 4); memcpy(chainR_, inR_, n * 4); }
+        else { memcpy(chainL_, mixL_, n * 4); memcpy(chainR_, mixR_, n * 4); }
+        for (int i = 0; i < kSlots; ++i) {
+            Slot& sl = slots[i];
+            if (sl.aapOwned.load(std::memory_order_relaxed)) continue;
+            auto nat = std::atomic_load(&sl.native);
+            if (!isEffect(sl, nat)) continue;
+            const float* inL = chainL_;
+            const float* inR = chainR_;
+            if (sl.inputMode.load(std::memory_order_relaxed) == 1) { testSignal(); inL = inL_; inR = inR_; }
+            if (nat) {
                 nat->process(inL, inR, l_, r_, n);
-                float pk = sl.peak.load(std::memory_order_relaxed);
-                for (uint32_t k = 0; k < n; ++k) {
-                    mixL_[k] += l_[k]; mixR_[k] += r_[k];
-                    pk = std::max(pk, std::fabs(l_[k]));
-                }
-                sl.peak.store(pk, std::memory_order_relaxed);
-                continue;
+            } else {
+                auto b = std::atomic_load(&sl.bridge);
+                if (!b || b->hostState() != VG_HOST_RUNNING) continue;
+                ensureSlotFill(i, *b, n, routeBuf);
+                b->writeInput(inL, inR, n);
+                b->read(l_, r_, n);
+                b->wakeHost();
             }
-            auto b = std::atomic_load(&sl.bridge);
-            if (!b || b->hostState() != VG_HOST_RUNNING) continue;
-            ensureSlotFill(i, *b, n, routeBuf);
-            if (sl.inputMode.load(std::memory_order_relaxed) == 1) {
-                if (!testFilled) { test_.fill(inL_, inR_, n); testFilled = true; }
-                b->writeInput(inL_, inR_, n);
-            }
-            b->read(l_, r_, n);
-            b->wakeHost();
-            float pk = sl.peak.load(std::memory_order_relaxed);
-            for (uint32_t k = 0; k < n; ++k) {
-                mixL_[k] += l_[k]; mixR_[k] += r_[k];
-                pk = std::max(pk, std::fabs(l_[k]));
-            }
-            sl.peak.store(pk, std::memory_order_relaxed);
+            memcpy(chainL_, l_, n * 4); memcpy(chainR_, r_, n * 4);
+            addPeak(sl);
         }
         const float g = gain_.load(std::memory_order_relaxed);
-        for (uint32_t i = 0; i < n; ++i) { out[2 * i] = mixL_[i] * g; out[2 * i + 1] = mixR_[i] * g; }
+        for (uint32_t i = 0; i < n; ++i) { out[2 * i] = chainL_[i] * g; out[2 * i + 1] = chainR_[i] * g; }
         for (int32_t i = (int32_t)n; i < frames; ++i) out[2 * i] = out[2 * i + 1] = 0;
         const int64_t dt = nowNs() - t0;
         cbCount_.fetch_add(1, std::memory_order_relaxed);
@@ -268,6 +288,10 @@ private:
     int sampleRate_ = 48000, bufferBursts_ = 2;
     float zero_[kMaxFrames] = {};
     float l_[kMaxFrames], r_[kMaxFrames], inL_[kMaxFrames], inR_[kMaxFrames], mixL_[kMaxFrames], mixR_[kMaxFrames];
+    float chainL_[kMaxFrames], chainR_[kMaxFrames];
+public:
+    std::atomic<int> fxSource_{0};  // what feeds the effect chain: 0 the instruments, 1 the test signal
+private:
     TestSignal test_;
     std::atomic<uint64_t> cbCount_{0}, cbNsTotal_{0}, cbNsMax_{0}, restarts_{0};
     std::atomic<int32_t> lastFrames_{0};
@@ -366,6 +390,8 @@ JNIFN(void, setTargetFill)(JNIEnv*, jclass, jint slot, jint frames) {
 }
 
 JNIFN(void, setInputMode)(JNIEnv*, jclass, jint slot, jint mode) { if (okSlot(slot)) engine().slots[slot].inputMode = mode; }
+JNIFN(void, setSlotKind)(JNIEnv*, jclass, jint slot, jint kind) { if (okSlot(slot)) engine().slots[slot].kind = kind; }
+JNIFN(void, setFxInput)(JNIEnv*, jclass, jint mode) { engine().fxSource_ = mode; }
 JNIFN(void, setGain)(JNIEnv*, jclass, jfloat g) { engine().gain_ = g; }
 JNIFN(void, setAapOwned)(JNIEnv*, jclass, jint slot, jboolean owned) { setSlotAapOwned(slot, owned); }
 

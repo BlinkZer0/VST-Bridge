@@ -4,6 +4,7 @@ package com.vstghost
 import android.content.Context
 import android.os.SystemClock
 import android.util.Log
+import org.json.JSONObject
 import java.io.File
 
 /**
@@ -43,6 +44,8 @@ class Bridge private constructor(context: Context, val slot: Int) {
     private val appContext: Context = context.applicationContext
     /** Phase 5: the slot runs a native plugin in-process instead of a Wine host. */
     @Volatile var isNativeLoaded = false; private set
+    /** Instrument (MIDI in, audio out) or effect (audio in and out); known once loaded. */
+    @Volatile var isInstrument = true; private set
     private val shm = File(context.filesDir, "ipc/slot$slot.shm")
     private var proc: Process? = null
     @Volatile private var stopping = false
@@ -111,6 +114,9 @@ class Bridge private constructor(context: Context, val slot: Int) {
             when (NativeEngine.hostState(slot)) {
                 NativeEngine.HOST_RUNNING -> {
                     lastLoadMs = SystemClock.elapsedRealtime() - t0
+                    // Instrument or effect: decides the slot's place in the engine's routing.
+                    isInstrument = request("info")?.let { runCatching { JSONObject(it).optBoolean("instrument", true) }.getOrNull() } ?: true
+                    NativeEngine.setSlotKind(slot, if (isInstrument) 0 else 1)
                     return LoadResult(true, "running", lastLoadMs)
                 }
                 NativeEngine.HOST_FAILED -> return LoadResult(false, NativeEngine.lastResponse(slot) ?: "host failed", 0)
@@ -128,15 +134,18 @@ class Bridge private constructor(context: Context, val slot: Int) {
         plugin = f
         val t0 = SystemClock.elapsedRealtime()
         val lib = f.nameWithoutExtension
-        NativePlugins.ensure(appContext, lib) ?: return LoadResult(false, "could not load native library $lib", 0)
+        val info = NativePlugins.ensure(appContext, lib) ?: return LoadResult(false, "could not load native library $lib", 0)
         val err = onMain { NativeEngine.nativeOpen(slot, "lib$lib.so", rate, 1024) }
         if (err != null) return LoadResult(false, err, 0)
         isNativeLoaded = true
+        isInstrument = info.optBoolean("instrument", true)
+        NativeEngine.setSlotKind(slot, if (isInstrument) 0 else 1)
         lastLoadMs = SystemClock.elapsedRealtime() - t0
         return LoadResult(true, "running (native)", lastLoadMs)
     }
 
     fun stop() {
+        plugin = null  // (load() sets it again after stopping the previous plugin)
         if (isNativeLoaded) {
             isNativeLoaded = false
             onMain { NativeEngine.nativeEditorClose(slot); NativeEngine.nativeClose(slot) }
