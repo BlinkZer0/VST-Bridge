@@ -7,7 +7,8 @@
 # Environment: VG_CORPUS (~/vstghost-corpus), ADB (adb), OUT ($VG_CORPUS/results-phone),
 #              PKG (com.vstghost), PY (python3), LOAD_WAIT (45 s), EDITOR_WAIT (45 s).
 set -u
-HERE="$(cd "$(dirname "$0")" && pwd)"
+export MSYS_NO_PATHCONV=1  # Git Bash: keep /sdcard/... arguments as they are
+HERE="$(cd "$(dirname "$0")" && (pwd -W 2>/dev/null || pwd))"  # Windows form on Git Bash (MSYS_NO_PATHCONV=1 is set for the device paths)
 C="${VG_CORPUS:-$HOME/vstghost-corpus}"
 ADB="${ADB:-adb}"
 PY="${PY:-python3}"
@@ -41,19 +42,20 @@ for p in "${PLUGS[@]}"; do
     "$ADB" logcat -c; "$ADB" shell am start -n "$PKG/.PlayerActivity" --es req info --el t "$(date +%s)" >/dev/null 2>&1; sleep 4
     info=$("$ADB" logcat -d -s VSTGHOST:* | grep -o "req slot 1 info: .*" | sed 's/.*info: //')
     inst=$(echo "$info" | "$PY" -c 'import sys,json
-try: d=json.loads(sys.stdin.read()); print(str(d.get("instrument","?")).lower(), d.get("paramCount","?"))
-except Exception: print("? ?")')
+try: d=json.loads(sys.stdin.read()); print(str(d.get("instrument","?")).lower(), d.get("paramCount","?"), sep="\t")
+except Exception: print("?\t?")')
     "$ADB" logcat -c
+    "$ADB" shell run-as "$PKG" rm -f files/editor-dump-2.bmp  # a plugin without a GUI must not inherit the last picture
     "$ADB" shell "am start -n $PKG/.EditorActivity --ei slot 1 --ei dump 3" >/dev/null 2>&1
     sleep "${EDITOR_WAIT:-45}"
     eo=$("$ADB" logcat -d -s VSTGHOST:* | grep -o 'editor_open slot 1: .*' | head -1)
     ed=$(echo "$eo" | "$PY" -c 'import sys,re
 s=sys.stdin.read(); m=re.search(r"\{.*?\}", s)
 import json
-try: d=json.loads(m.group(0)); print(("ok" if d.get("ok") else "FAIL:"+d.get("error","")[:40].replace(" ","_")), round(d.get("openMs",0)), "%sx%s"%(d.get("width","?"),d.get("height","?")))
-except Exception: print("FAIL(none) 0 ?")')
+try: d=json.loads(m.group(0)); print(("ok" if d.get("ok") else "FAIL:"+d.get("error","")[:40].replace(" ","_")), round(d.get("openMs",0)), "%sx%s"%(d.get("width","?"),d.get("height","?")), sep="\t")
+except Exception: print("FAIL(none)\t0\t?")')
     "$ADB" exec-out run-as "$PKG" cat files/editor-dump-2.bmp > "$OUT/$s.bmp" 2>/dev/null && "$PY" "$HERE/../phone/bmp2png.py" "$OUT/$s.bmp" "$OUT/$s.png" 2>/dev/null && rm -f "$OUT/$s.bmp"
     "$ADB" shell input keyevent 4
-    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$n" "${imp:-?}" "$load" "$inst" "${peak:-?}" "${avg:-?}" "${ur:-?}" "$ed" | tr ' ' '\t' | tee -a "$OUT/phone.tsv"
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$n" "${imp:-?}" "$load" "$inst" "${peak:-?}" "${avg:-?}" "${ur:-?}" "$ed" | tee -a "$OUT/phone.tsv"
 done
 echo; column -t -s $'\t' "$OUT/phone.tsv"

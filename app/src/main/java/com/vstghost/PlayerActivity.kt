@@ -475,12 +475,16 @@ class PlayerActivity : AppCompatActivity() {
             // adb: --ez selftest true  -> play a chord through the normal MIDI path and log the output peak
             if (selftestOnce) {
                 selftestOnce = false
+                // An effect is fed by the instrument bus, which is silent here: feed it the test signal
+                // for the measurement (the engine's "FX: test" switch), then put the switch back.
+                if (!instrument && !fxTestSignal) NativeEngine.setFxInput(1)
                 NativeEngine.resetStats(slot)
                 if (instrument) for (k in intArrayOf(60, 64, 67)) NativeEngine.sendMidi(slot, 0x90, k, 100)
                 Thread.sleep(1500)
                 val peak = NativeEngine.stats(slot)[27]
                 val st = NativeEngine.stats(slot)
                 if (instrument) for (k in intArrayOf(60, 64, 67)) NativeEngine.sendMidi(slot, 0x80, k, 0)
+                if (!instrument && !fxTestSignal) NativeEngine.setFxInput(0)
                 android.util.Log.i("VSTGHOST", "selftest ${NativePlugins.displayName(f)}: peak %.3f (%.1f dBFS) load %d ms renderAvg %.0f us max %.0f us blocks %.0f underruns %.0f".format(
                     peak, 20 * kotlin.math.log10(peak.coerceAtLeast(1e-9)), r.ms, st[9], st[10], st[8], st[6]))
             }

@@ -21,6 +21,7 @@ Still open from Phase 3: a third-party MIDI app playing our virtual device.
 | **Native plugins**: E-Piano, Brass Knuckles, Pedal Faster built from source with the JUCE adapter, 40–140 µs per 96-frame block, native editors (web UI included), MIDI self-test PASS | Phase 5 |
 | **No Strings and The Ham native** (JUCE 8 + WebView2 web UIs, blank under Wine): built from their local checkouts (`-Pvg.pluginSrcRoot`, local-only entries in native/CMakeLists.txt), load in 4–8 ms (53 / 143 parameters), web UI editors complete and interactive. Editors are no longer shrunk below their logical size (the zoom layout scales them instead), which stops web pages from clipping | 2026-11-19 |
 | **Imported Windows plugins**: Dexed (Direct2D editor complete, taps work), Pedal Faster Windows build (GDI editor), Surge XT (2081 parameters, OpenGL editor) — all with 0–1 underruns while the editor is open | Phase 5 |
+| **Free-VST3 corpus on the phone** (2026-11-19): 30/30 import, load and run (0 underruns), 25/25 editors with a GUI open — incl. Monique, Surge XT Effects, wolf-shaper, the Dragonflys and the OpenGL visualizers that failed or were untested before ([docs/compatibility.md](docs/compatibility.md)) | `tools/corpus/phone-triage.sh` |
 | **Install plugin** (⋮ menu): lists `.vst3` files/bundles and zips in Download, Documents, the storage root and SD cards (needs "All files access"; the app asks once and opens the settings page) and installs the tapped one. Verified: Dexed zip, No Strings and The Ham bundles from Download; `.exe`/`.msi`/`.7z` are listed as not installable | 2026-11-19 |
 
 ## Measured numbers (device)
@@ -43,7 +44,7 @@ Still open from Phase 3: a third-party MIDI app playing our virtual device.
 - **AAP hosts showing our runtime parameter list:** not checked. **FX slots through AAP:** not exercised.
 - Editors: on-screen use not yet confirmed by a person; no keyboard input to plugins; WebView2 editors of bridged (Wine) plugins blank — the native builds of those plugins are the answer; editors not reachable from AAP hosts' UIs.
 - Odin2 native build (modal loops); Projucer-only projects; plugins that need their installer's data (Surge XT has no factory patches without it).
-- Corpus on the phone: Wolf Shaper, Dragonfly, Surge XT Effects, Monique not re-tested after today's fixes. Sideload edition not re-tested in Phase 5.
+- Sideload edition not re-tested in Phase 5.
 - Direct2D-era JUCE 8 editors cost about two cores while open (software rasterization of every presented frame).
 - No foreground service yet (background playing not guaranteed).
 - Touch latency and acoustic round trip: no hardware.
