@@ -275,8 +275,15 @@ class PlayerActivity : Activity() {
 
     private fun refreshPlugins() {
         // Native (Phase 5) plugins first, then bridged Windows VSTs.
-        plugins = NativePlugins.entries(this).map { it.file } +
-            File(filesDir, "plugins").listFiles()?.filter { it.name.endsWith(".vst3") }?.sortedBy { it.name.lowercase() }.orEmpty()
+        // A plugin we build natively hides its Windows build of the same name: the native one is
+        // faster and has a working editor (the Windows builds of the user's plugins use WebView2,
+        // which stays blank under Wine), and two "E-Piano" entries only invite picking the wrong one.
+        val native = NativePlugins.entries(this)
+        val nativeNames = native.map { NativePlugins.displayName(it.file).removeSuffix(" · native").lowercase() }.toSet()
+        plugins = native.map { it.file } +
+            File(filesDir, "plugins").listFiles()
+                ?.filter { it.name.endsWith(".vst3") && it.nameWithoutExtension.lowercase() !in nativeNames }
+                ?.sortedBy { it.name.lowercase() }.orEmpty()
         val names = plugins.map { NativePlugins.displayName(it) }.ifEmpty { listOf("(no plugins: push them to Android/data/$packageName/files/plugins)") }
         pluginSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, names).apply {
             setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)

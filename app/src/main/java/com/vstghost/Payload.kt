@@ -29,6 +29,7 @@ class Payload(private val context: Context) {
         /** Must match PLACEHOLDER in payload/build.sh: "/vstghost_root" + 50 underscores = 64 chars. */
         val PLACEHOLDER = "/vstghost_root" + "_".repeat(50)
         const val ARCHIVE_NAME = "vstghost-payload.tar.zst"
+        private val installLock = Any()
         const val JNILIBS_MAP = "jnilibs.map"
         const val WAYLAND_SOCKET = "wl-0"
         /** Must match X64LIBS (+ the xkbregistry stub) in payload/build.sh. */
@@ -95,8 +96,17 @@ class Payload(private val context: Context) {
 
     data class InstallResult(val ok: Boolean, val message: String, val statsJson: String?, val source: String?, val archiveBytes: Long)
 
-    /** Extracts into rootfs.new, then swaps it in. Blocking; call off the UI thread. */
-    fun install(progress: ProgressListener?): InstallResult {
+    /**
+     * Extracts into rootfs.new, then swaps it in. Blocking; call off the UI thread. One install at a
+     * time per process: the player, the slot manager and the MIDI services all start with
+     * `needsInstall() → install()`, and two installs racing on rootfs.new/rootfs left half trees.
+     */
+    fun install(progress: ProgressListener?): InstallResult = synchronized(installLock) {
+        if (!needsInstall()) InstallResult(true, "Payload ${installedVersion} already installed", null, null, 0)
+        else installLocked(progress)
+    }
+
+    private fun installLocked(progress: ProgressListener?): InstallResult {
         val src = openSource()
             ?: return InstallResult(false, "No payload found. Looked in: ${archiveCandidates()}", null, null, 0)
         val staging = File(context.filesDir, "rootfs.new")
@@ -108,7 +118,13 @@ class Payload(private val context: Context) {
             // instead of trusting a half-deleted rootfs.
             File(root, ".installed").delete()
             File(root, ".installed-source").delete()
-            deleteTree(root)
+            // A Wine process may still be writing in the old tree (prefix, tmp): try twice.
+            if (runCatching { deleteTree(root) }.isFailure) {
+                Thread.sleep(500)
+                runCatching { deleteTree(root) }.onFailure { e ->
+                    return InstallResult(false, "cannot remove old payload: $e", res, src.label, src.length)
+                }
+            }
             if (!staging.renameTo(root)) return InstallResult(false, "rename ${staging} -> $root failed", res, src.label, src.length)
             File(root, "tmp").mkdirs()
             File(root, "home").mkdirs()
