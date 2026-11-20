@@ -1,8 +1,0 @@
-/* Only the vgn interface and JNI entry points leave a native plugin library. */
-{
-  global:
-    vgn_*;
-    JNI_OnLoad;
-    Java_*;
-  local: *;
-};
