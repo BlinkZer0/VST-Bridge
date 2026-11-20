@@ -51,7 +51,10 @@ hand_over_prefix() {
     [ -n "$user" ] || { echo "cannot tell the build user: rerun with VG_USER=<name>"; exit 1; }
     mkdir -p /data/data/com.termux
     chown -R "$user" /data/data/com.termux
-    log "/data/data/com.termux owned by $user"
+    # setup-cgct.sh untars "data/…" at /: tar also sets the timestamps of /data and /data/data,
+    # which fails (and aborts the script) unless they are the user's too. They exist only for this.
+    chown "$user" /data /data/data
+    log "/data, /data/data, /data/data/com.termux owned by $user"
 }
 
 case "${1:-}" in
