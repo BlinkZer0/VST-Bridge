@@ -6,6 +6,8 @@
 # point TERMUX_GLIBC_LOCAL / TERMUX_GCCLIBS_LOCAL at the results (see versions.env).
 #
 #   payload/build-glibc-src.sh setup     once, as root (WSL: `wsl -u root`): apt packages
+#   payload/build-glibc-src.sh perms     as root: only the ownership part of 'setup' (for a setup
+#                                        that ran before this step existed)
 #   payload/build-glibc-src.sh tools     once, as the normal user: Android NDK + CGCT toolchain
 #   payload/build-glibc-src.sh build     as the normal user: builds the packages (long: glibc ~20 min,
 #                                        gcc-libs builds GCC, 1–2 h on 32 cores)
@@ -41,6 +43,17 @@ fetch_tree() {
     log "trees at $W (glibc-packages @${GLIBC_PACKAGES_COMMIT:0:10}, termux-packages @${TERMUX_PACKAGES_COMMIT:0:10})"
 }
 
+# The build system's prefix and the CGCT cross toolchain live under /data/data/com.termux
+# (hard-coded in scripts/properties.sh). 'tools' and 'build' run as the normal user, so the tree
+# must be theirs: WSL's default user, or VG_USER=<name>.
+hand_over_prefix() {
+    local user="${VG_USER:-${SUDO_USER:-$(id -nu 1000 2>/dev/null || true)}}"
+    [ -n "$user" ] || { echo "cannot tell the build user: rerun with VG_USER=<name>"; exit 1; }
+    mkdir -p /data/data/com.termux
+    chown -R "$user" /data/data/com.termux
+    log "/data/data/com.termux owned by $user"
+}
+
 case "${1:-}" in
     setup)
         [ "$(id -u)" = 0 ] || { echo "run 'setup' as root (wsl -u root)"; exit 1; }
@@ -52,12 +65,18 @@ case "${1:-}" in
             sed -i -e 's/resolute/noble/g' -e 's/python3\.14-venv/python3-venv/g' -e 's/python3\.14/python3/g' scripts/setup-ubuntu.sh
         fi
         ./scripts/setup-ubuntu.sh
+        hand_over_prefix
+        ;;
+    perms)
+        [ "$(id -u)" = 0 ] || { echo "run 'perms' as root (wsl -u root)"; exit 1; }
+        hand_over_prefix
         ;;
     tools)
         fetch_tree
         cd "$W/glibc-packages"
+        [ -w /data/data/com.termux ] || { echo "/data/data/com.termux is not writable: run 'setup' as root first"; exit 1; }
         ./scripts/setup-android-sdk.sh     # NDK into $HOME/lib/android-ndk-*
-        ./scripts/setup-cgct.sh            # CGCT (cross glibc compiler toolchain)
+        ./scripts/setup-cgct.sh            # CGCT (cross glibc compiler toolchain) into /data/data/com.termux/cgct
         ;;
     build)
         fetch_tree
@@ -75,7 +94,7 @@ case "${1:-}" in
         log "done: $OUT"
         ;;
     *)
-        sed -n 2,14p "$0"
+        sed -n 2,16p "$0"
         exit 1
         ;;
 esac
