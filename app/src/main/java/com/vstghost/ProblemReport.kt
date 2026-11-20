@@ -47,6 +47,7 @@ object ProblemReport {
             }.getOrElse { "logcat unavailable: $it" })
             File(ctx.filesDir, "sets").listFiles()?.forEach { put("sets/${it.name}", it.readText()) }
             File(ctx.filesDir, "slots.json").takeIf { it.isFile }?.let { put("slots.json", it.readText()) }
+            File(ctx.filesDir, "installer.log").takeIf { it.isFile }?.let { put("installer.log", it.readText().takeLast(200_000)) }
             for (p in listOf("player", "mixer", "midi")) put("prefs-$p.txt", ctx.getSharedPreferences(p, Context.MODE_PRIVATE).all.toString())
         }
         return f

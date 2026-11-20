@@ -71,5 +71,7 @@ within 90 s after the editor was closed (Dexed, ProM, glBars, DragonflyEarlyRefl
 
 Installer-only downloads: OB-Xd, Odin2 (official), TAL plugins, Helm, Neural Amp Modeler,
 Chow* plugins, u-he (Zebralette, Tyrell, Podolski), sfizz, Vital. They need the installer-based
-import (run the installer under Wine silently, or extract it) that is on the list. Cardinal's
+import that is on the list. Running the installer under Wine does not work for Inno Setup and NSIS
+installers: their launcher is a 32-bit program and v1 runs 64-bit code only (the app says so and
+refuses them; MSI installers run). Extracting the installer (innoextract / 7-Zip) is the way forward. Cardinal's
 1.1 GB zip is excluded for size only.

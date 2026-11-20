@@ -131,6 +131,8 @@ class PluginImport(private val ctx: Context) {
                         n.endsWith(".vst3") -> Candidate(f, label, true, if (f.isDirectory) "VST3 bundle" else "VST3")
                         n.endsWith(".zip") && f.isFile && f.length() < 600L shl 20 -> Candidate(f, label, true, "zip")
                         n.endsWith(".7z") && f.isFile -> Candidate(f, label, false, "7z archive: unpack it first")
+                        n.endsWith(".exe") && f.isFile && peMachine(f) == 0x14c ->
+                            Candidate(f, label, false, "32-bit installer program: cannot run here (64-bit only); install on a PC and import the .vst3 as a zip")
                         (n.endsWith(".exe") || n.endsWith(".msi")) && f.isFile -> Candidate(f, label, true, "installer: runs under Wine")
                         else -> null
                     } ?: return@forEach
@@ -176,6 +178,21 @@ class PluginImport(private val ctx: Context) {
         return when { "Inno Setup" in head -> "inno"; "Nullsoft" in head -> "nsis"; else -> "exe" }
     }
 
+    /** The PE machine type of a Windows program: 0x14c = x86 (32-bit), 0x8664 = x64, null = not a PE file. */
+    private fun peMachine(f: File): Int? = runCatching {
+        java.io.RandomAccessFile(f, "r").use { r ->
+            if (r.length() < 0x40) return null
+            r.seek(0x3c)
+            val b = ByteArray(4); r.readFully(b)
+            val off = (b[0].toInt() and 0xff) or ((b[1].toInt() and 0xff) shl 8) or ((b[2].toInt() and 0xff) shl 16)
+            if (off <= 0 || off + 6 > r.length()) return null
+            r.seek(off.toLong()); r.readFully(b)
+            if (b[0] != 'P'.code.toByte() || b[1] != 'E'.code.toByte()) return null
+            val m = ByteArray(2); r.readFully(m)
+            (m[0].toInt() and 0xff) or ((m[1].toInt() and 0xff) shl 8)
+        }
+    }.getOrNull()
+
     /**
      * Runs a plugin installer unattended in the Wine prefix (Inno Setup: /VERYSILENT, NSIS: /S,
      * MSI: msiexec /qn) and moves the .vst3 bundles it left in Common Files\VST3 into files/plugins.
@@ -185,6 +202,12 @@ class PluginImport(private val ctx: Context) {
      */
     fun runInstaller(f: File, status: (String) -> Unit): Result {
         val kind = installerKind(f) ?: return Result(emptyList(), "${f.name}: not an installer")
+        // The Windows runtime runs 64-bit code only (no WoW64). Inno Setup and NSIS installers are
+        // 32-bit programs even when the plugin inside is 64-bit, so they cannot run here at all.
+        if (kind != "msi" && peMachine(f) == 0x14c) return Result(emptyList(),
+            "${f.name} is a 32-bit installer program, which VST gHost cannot run (it runs 64-bit code only). " +
+            "Run the installer on a Windows PC, zip the .vst3 bundle it installs (Program Files\\Common Files\\VST3), " +
+            "and import that zip here.")
         val payload = Payload(ctx)
         Bridge.ensureSession(payload)
         val tmp = File(payload.root, "tmp").apply { mkdirs() }
@@ -207,7 +230,9 @@ class PluginImport(private val ctx: Context) {
             "WINEDEBUG" to "-all,err+module", "WINEDLLOVERRIDES" to "mscoree=d;mshtml=d;winemenubuilder.exe=d")))
         val p = pb.start()
         val tail = ArrayDeque<String>()
-        Thread { p.inputStream.bufferedReader().forEachLine { synchronized(tail) { tail.addLast(it); while (tail.size > 20) tail.removeFirst() } } }
+        val log = File(ctx.filesDir, "installer.log").printWriter()   // the whole output, for problem reports
+        log.println("${f.name} ($kind): ${args.joinToString(" ")}")
+        Thread { p.inputStream.bufferedReader().forEachLine { log.println(it); synchronized(tail) { tail.addLast(it); while (tail.size > 20) tail.removeFirst() } }; log.close() }
             .apply { isDaemon = true; start() }
         val finished = p.waitFor(10, java.util.concurrent.TimeUnit.MINUTES)
         exe.delete()
