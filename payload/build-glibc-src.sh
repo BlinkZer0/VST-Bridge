@@ -126,7 +126,7 @@ case "${1:-}" in
         grep -q "libsanitizer/{a,l,ub}san" gpkg/gcc-libs/build.sh && { echo "could not patch the gcc-libs install step"; exit 1; }
         # CONTINUE=1: resume a build whose compile finished (termux build-package.sh -c skips
         # extraction and configure, runs make, make install and packaging).
-        local cont=""
+        cont=""
         [ "${CONTINUE:-0}" = 1 ] && cont="-c"
         log "building: $PACKAGES"
         # -I: install dependencies from the repo instead of building the world; --library glibc:
