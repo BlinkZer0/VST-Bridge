@@ -27,6 +27,12 @@ What to enter in the Play Console forms, matching what the app actually does (20
   other files, and keeps no index of the user's storage.
 - **Video for review:** record ⋮ → Install plugin… → permission dialog → Android settings toggle →
   back in the app the list of files → tapping one → the plugin appears in the plugin list.
+  Recorded 2026-11-20 on the 1.0.0-beta1 release build (77 s, 1080p):
+  `C:\Users\Randy\vstghost-keys\releases\1.0.0-beta1\review-videos\review-all-files-access.mp4`.
+  It shows the dialog ("Allow access to your files" → Open settings), the Android "All files
+  access" page with the toggle turned on, ⋮ → Install plugin… again listing the Download folder
+  (zips, .vst3, an installer), tapping `Surge XT.zip`, "Imported Surge XT" and Surge XT in the
+  plugin picker.
 
 ### Foreground service (`FOREGROUND_SERVICE_MEDIA_PLAYBACK`)
 
@@ -36,6 +42,10 @@ What to enter in the Play Console forms, matching what the app actually does (20
   action and stops itself when the last plugin is unloaded.
 - **Video for review:** load a plugin → press Home → the notification is visible → play from a MIDI
   app or return and press Stop.
+  Not recorded yet: the notification shade also shows every other notification on the phone
+  (messages, mail). Clear or silence them first (or record on a phone with none), then record:
+  Load → Inst 1, play two keys, Home, open the shade ("VST gHost is playing · Inst 1: Surge XT"),
+  expand it, tap Stop; the notification goes away and the app shows the slot empty.
 
 ## Store listing
 
@@ -51,6 +61,24 @@ What to enter in the Play Console forms, matching what the app actually does (20
 - **Target audience:** 18 and over (simplest; the app has no child-directed content).
 - **Ads:** no.
 - **App access:** all functionality is available without a login.
+
+## Recording the review videos
+
+Phone screen recorder over adb, app driven with `input tap` (coordinates from `uiautomator dump`),
+landscape, release build installed from the universal APK:
+
+```
+adb shell svc power stayon usb                      # the screen must not time out mid-take
+adb shell screenrecord --time-limit 160 --bit-rate 6000000 /sdcard/review-<name>.mp4 &
+…drive the UI…
+adb shell pkill -INT screenrecord; adb pull /sdcard/review-<name>.mp4
+```
+
+Before the All-files-access take: ⋮ → Uninstall plugin… removes the plugin to be imported again,
+`adb shell appops set --uid com.vstghost MANAGE_EXTERNAL_STORAGE default` (the uid-level mode is
+the one that counts) and a force-stop put the permission back to "not granted". A zip of a
+plugin in `Download` is what the list shows. Play wants under 2 minutes per video; keep takes
+short and do not show other apps' notifications.
 
 ## Technical requirements (checked 2026-11-19)
 
