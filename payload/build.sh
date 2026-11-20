@@ -81,6 +81,16 @@ step_box64() {
     # arrived in GCC 15). -mtune only affects scheduling, so drop it and keep the SD8EG5 -march set.
     grep -q -- '-mtune=oryon-1' "$src/CMakeLists.txt"
     sed -i 's/ -mtune=oryon-1//g' "$src/CMakeLists.txt"
+    # WoW64: 32-bit Windows programs live below 2 GB (4 GB if large-address-aware). Box64 links
+    # itself at 0x34800000 and therefore tells Wine to reserve only 0x110000-0x30110000 of low
+    # memory, so a 32-bit program never gets a block bigger than ~750 MB (Surge XT's installer
+    # commits 1 GB for its LZMA dictionary and fails with "Out of memory"). Link Box64 at 256 GB
+    # (inside a 39-bit address space; its brk heap follows it) and reserve the same low area as
+    # Wine's own preloader does, 0x110000-0x68000000.
+    grep -q 'set(BOX64_ELF_ADDRESS "0x34800000")' "$src/CMakeLists.txt"
+    sed -i 's/set(BOX64_ELF_ADDRESS "0x34800000")/set(BOX64_ELF_ADDRESS "0x4000000000")/' "$src/CMakeLists.txt"
+    grep -q '{(void\*)0x00110000, 0x30000000}' "$src/src/tools/wine_tools.c"
+    sed -i 's/{(void\*)0x00110000, 0x30000000}/{(void*)0x00110000, 0x67ef0000}/' "$src/src/tools/wine_tools.c"
     local cc=aarch64-linux-gnu-gcc-14
     command -v "$cc" >/dev/null || { echo "$cc not found: re-run payload/setup-ubuntu.sh" >&2; exit 1; }
     cmake -S "$src" -B "$b" -G Ninja \
@@ -98,6 +108,7 @@ step_box64() {
     local interp
     interp="$(aarch64-linux-gnu-readelf -l "$STAGE/box64/bin/box64" | sed -n 's/.*interpreter: \(.*\)]/\1/p')"
     echo "box64 PT_INTERP: $interp"
+    echo "box64 load address: $(aarch64-linux-gnu-readelf -l "$STAGE/box64/bin/box64" | awk '/LOAD/{print $3; exit}')"
     [ "$interp" = "$PLACEHOLDER/glibc/lib/ld-linux-aarch64.so.1" ] || { echo "unexpected PT_INTERP" >&2; exit 1; }
 }
 
