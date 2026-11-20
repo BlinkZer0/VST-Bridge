@@ -102,7 +102,7 @@ step_box64() {
 }
 
 step_wine() {
-    log "Wine ${WINE_VERSION} (x86_64 only; Wayland driver for plugin editors, FreeType for fonts)"
+    log "Wine ${WINE_VERSION} (x86_64 + i386 PE = WoW64; Wayland driver for plugin editors, FreeType for fonts)"
     local t src="$WORK/wine-src" b="$WORK/wine-build" inst="$WORK/wine-install"
     t="$(fetch "$WINE_URL" "$WINE_SHA256" "wine-${WINE_VERSION}.tar.xz")"
     rm -rf "$src" && mkdir -p "$src"
@@ -111,10 +111,14 @@ step_wine() {
         echo "applying $(basename "$p")"
         patch -d "$src" -p1 --forward < "$p"
     done
+    # WoW64: the unix side and the 64-bit PE side are x86_64 (Box64 runs them); the i386 PE DLLs let
+    # 32-bit Windows programs (plugin installers' launchers are 32-bit) run inside the same 64-bit
+    # processes. Box64 runs that 32-bit code as is; no Box86/Box32 needed (Box64 docs/WINE.md).
+    command -v i686-w64-mingw32-gcc >/dev/null || { echo "i686-w64-mingw32-gcc not found: re-run payload/setup-ubuntu.sh" >&2; exit 1; }
     rm -rf "$b" "$inst" && mkdir -p "$b"
     (cd "$b" && "$src/configure" \
         --prefix=/opt/vstghost-wine \
-        --enable-archs=x86_64 --disable-tests \
+        --enable-archs=i386,x86_64 --disable-tests \
         --without-x --with-wayland --with-opengl --without-vulkan --without-sdl \
         --with-freetype --without-fontconfig \
         --without-pulse --without-alsa --without-oss --without-gstreamer --without-ffmpeg \
@@ -130,6 +134,9 @@ step_wine() {
     find "$STAGE/wine" -type f \( -name '*.so' -o -perm -u+x \) -exec sh -c \
         'for f; do case "$(file -b "$f")" in ELF*) strip --strip-unneeded "$f";; PE32+*) x86_64-w64-mingw32-strip --strip-unneeded "$f";; esac; done' sh {} +
     find "$STAGE/wine/lib/wine/x86_64-windows" -type f -exec x86_64-w64-mingw32-strip --strip-unneeded {} + 2>/dev/null || true
+    find "$STAGE/wine/lib/wine/i386-windows" -type f -exec i686-w64-mingw32-strip --strip-unneeded {} + 2>/dev/null || true
+    [ -d "$STAGE/wine/lib/wine/i386-windows" ] || { echo "no i386-windows: WoW64 build failed" >&2; exit 1; }
+    du -sh "$STAGE/wine/lib/wine/i386-windows" "$STAGE/wine/lib/wine/x86_64-windows"
     "$STAGE/wine/bin/wine" --version
     echo "x86_64 unix-side libraries Wine links (Box64 must wrap or find these):"
     find "$STAGE/wine/lib/wine/x86_64-unix" -name '*.so' -exec objdump -p {} \; | awk '/NEEDED/{print $2}' | sort | uniq -c
