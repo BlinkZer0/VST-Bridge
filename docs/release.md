@@ -33,6 +33,21 @@ bash payload/build.sh                 # only when the payload changed (WSL; writ
 
 Output: `app/build/outputs/bundle/playRelease/app-play-release.aab` (upload this) and
 `app/build/outputs/mapping/playRelease/mapping.txt` (upload with it, for readable crash reports).
+Copy both, with `payload/out/vstghost-payload.tar.zst.sha256` and the stage's `manifest.json`, to
+`C:\Users\Randy\vstghost-keys\releases\<versionName>\` (outside the repository, next to the key),
+and tag the commit `v<versionName>`.
+
+A universal APK of the bundle, for the checks below, comes from the Android Gradle Plugin's own
+copy of bundletool (no download needed):
+
+```powershell
+.\gradlew.bat :app:packagePlayReleaseUniversalApk "-Pvg.nativePlugins=epiano;brass;pedalfaster;nostrings;theham" "-Pvg.pluginSrcRoot=C:/Users/Randy/OneDrive/Documents/GitHub"
+```
+
+→ `app/build/outputs/apk_from_bundle/playRelease/app-play-release-universal.apk`. `unzip -v` on it
+must list `assets/vstghost-payload.tar.zst` as `Stored` (the app opens the archive by file
+descriptor; a deflated entry would break first-run setup), and `apksigner verify --print-certs`
+must name the upload certificate (`CN=VST gHost, O=Blink Zero`).
 
 Before uploading, bump `versionCode` (and `versionName`) in `app/build.gradle.kts`: Play needs a
 higher versionCode every time.
@@ -46,9 +61,10 @@ higher versionCode every time.
 
 ## Checks before upload
 
-- `bundletool build-apks --bundle app-play-release.aab --output t.apks --mode=universal` and install
-  the universal APK on the phone: first start must show "Setting up" and finish; load a bundled
-  instrument; open its editor; import a zip; play from a MIDI keyboard.
+- Install the universal APK (above) on the phone after uninstalling any debug build (different
+  key): first start must show "Setting up" and finish; load a bundled instrument; open its editor;
+  import a zip; play from a MIDI keyboard. Done for 1.0.0-beta1 on 2026-11-20 (all but the MIDI
+  keyboard: none was attached).
 - Native libraries 16 KB aligned (already true: `llvm-readelf -l` shows 0x4000/0x10000 LOAD alignment).
 - The licenses screen (⋮ → About) opens and lists every component.
 - Play Console: data safety, permission declarations and listing texts in

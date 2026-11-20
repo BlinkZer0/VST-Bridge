@@ -45,9 +45,8 @@ open), Surge XT engine + OpenGL editor (2.2 s, 0.1 core), Pedal Faster Windows b
    parameters) and Brass Knuckles (native programs). Known: the "current program" dot can lag after
    a state restore (JUCE's program parameter); plugins without a program list (Surge XT) only get
    `.vstpreset`/saved presets — Surge's own `.fxp` library would need its data folder (item 4 of the
-   Phase 5 list). **Caveat found:** the Wine prefix is replaced on every app update, so anything a
-   plugin stores inside it (Surge's user data, plugin-installed presets) is lost — persist
-   `prefix/drive_c/users/vstghost` across payload reinstalls.
+   Phase 5 list). The Wine prefix is replaced on every app update; what plugins store inside it
+   (user folder, ProgramData, the common VST3 folders) is carried over, see item 9.
 4. **More free VST3s for compatibility — DONE 2026-11-19 (phone pass included).** `tools/corpus/` (manifest, fetch.sh,
    pc-triage.sh, phone-triage.sh) is committed; the corpus is 30 plugins (Dexed, Surge XT + FX,
    Monique, Dragonfly ×4, Wolf Shaper, Uhhyou ×3, DPF-Plugins ×15, ADLplug, OPNplug, Stochas).
@@ -200,10 +199,14 @@ open), Surge XT engine + OpenGL editor (2.2 s, 0.1 core), Pedal Faster Windows b
    - 1 Release build — DONE: `bundlePlayRelease` → 127 MB signed bundle (upload key at
      `C:/Users/Randy/vstghost-keys/upload.jks`, password in the git-ignored `keystore.properties`),
      payload as the install-time asset pack `payload`, R8 with `app/proguard-rules.pro`, mapping.txt.
-     **Your check:** `java -jar bundletool.jar build-apks --bundle=app/build/outputs/bundle/playRelease/app-play-release.aab --output=t.apks --mode=universal`,
-     unzip `t.apks`, then `unzip -v universal.apk | grep payload` must say `Stored` (the app opens the
-     archive by file descriptor; a deflated entry would break first-run setup) — then install
-     universal.apk and run through docs/release.md's checklist. The tooling here would not run the jar.
+     Checked 2026-11-20 on the final payload (from-source glibc): the universal APK built by
+     `:app:packagePlayReleaseUniversalApk` stores the payload uncompressed, is signed by the upload
+     key, and on the phone (debug build uninstalled first) set up in a few seconds, loaded Brass
+     Knuckles (18 ms, native editor), imported the Dexed zip and loaded it (1.8 s), played from the
+     on-screen keyboard with 0 underruns, and About lists version, runtime, Terms, Privacy, Notices,
+     Licenses. Not exercised: a hardware MIDI keyboard. Bundle, mapping.txt and the payload
+     manifest/sha256 are kept in `C:/Users/Randy/vstghost-keys/releases/1.0.0-beta1/`; main is
+     fast-forwarded to phase-5 and tagged `v1.0.0-beta1`.
 
 ## Known rough edges (not blockers)
 
