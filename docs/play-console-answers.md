@@ -42,10 +42,12 @@ What to enter in the Play Console forms, matching what the app actually does (20
   action and stops itself when the last plugin is unloaded.
 - **Video for review:** load a plugin → press Home → the notification is visible → play from a MIDI
   app or return and press Stop.
-  Not recorded yet: the notification shade also shows every other notification on the phone
-  (messages, mail). Clear or silence them first (or record on a phone with none), then record:
-  Load → Inst 1, play two keys, Home, open the shade ("VST gHost is playing · Inst 1: Surge XT"),
-  expand it, tap Stop; the notification goes away and the app shows the slot empty.
+  Recorded 2026-11-20 on the 1.0.0-beta1 release build (71 s, 1080p):
+  `C:\Users\Randy\vstghost-keys\releases\1.0.0-beta1\review-videos\review-foreground-service.mp4`.
+  It shows Load → Inst 1 (Surge XT), two keys played, Home, the shade with "VST gHost is playing ·
+  Inst 1: Surge XT" as the only notification, the notification expanded, Stop tapped, the shade
+  reading "No notifications", and the app reopened with Inst 1 empty. The shade shows every
+  notification on the phone, so clear the others before a retake.
 
 ## Store listing
 
