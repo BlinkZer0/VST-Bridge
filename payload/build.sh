@@ -48,12 +48,13 @@ GLIBC_LIBS=(ld-linux-aarch64.so.1 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0
 GCC_LIBS=(libstdc++.so.6 libgcc_s.so.1 libatomic.so.1)
 
 step_glibc() {
-    local g c d="$WORK/glibc-pkg"
+    local g c origin=termux-pacman d="$WORK/glibc-pkg"
     if [ -n "${TERMUX_GLIBC_LOCAL:-}" ]; then
         # Built from source by payload/build-glibc-src.sh (same recipe as the prebuilt packages).
         log "glibc (from source: $TERMUX_GLIBC_LOCAL)"
         g="$TERMUX_GLIBC_LOCAL"; c="$TERMUX_GCCLIBS_LOCAL"
         [ -f "$g" ] && [ -f "$c" ] || { echo "TERMUX_GLIBC_LOCAL / TERMUX_GCCLIBS_LOCAL not found" >&2; exit 1; }
+        origin=source
     else
         log "glibc (Termux-pacman ${TERMUX_GLIBC_FILE})"
         g="$(fetch "$TERMUX_GPKG_REPO/$TERMUX_GLIBC_FILE" "$TERMUX_GLIBC_SHA256" "$TERMUX_GLIBC_FILE")"
@@ -68,6 +69,12 @@ step_glibc() {
         cp -L "$src/$l" "$STAGE/glibc/lib/$l"
         aarch64-linux-gnu-strip --strip-debug "$STAGE/glibc/lib/$l"
     done
+    # What the manifest (step_etc) records: the packages actually staged, and where they came from.
+    {
+        echo "GLIBC_ORIGIN=$origin"
+        echo "GLIBC_FILE=$(basename "$g")"; echo "GLIBC_SHA256=$(sha256sum "$g" | cut -d" " -f1)"
+        echo "GCCLIBS_FILE=$(basename "$c")"; echo "GCCLIBS_SHA256=$(sha256sum "$c" | cut -d" " -f1)"
+    } > "$STAGE/glibc/origin.env"
     file "$STAGE/glibc/lib/libc.so.6"
 }
 
@@ -293,7 +300,11 @@ step_etc() {
     log "config + version"
     mkdir -p "$STAGE/etc" "$STAGE/tmp" "$STAGE/home"
     cp "$HERE/box64rc" "$STAGE/etc/box64.box64rc"
-    local ver="s${PAYLOAD_SERIES}-$(date -u +%Y%m%d)-box64-${BOX64_VERSION}-wine-${WINE_VERSION}-glibc-${TERMUX_GLIBC_FILE%%-aarch64*}"
+    # Written by step_glibc; falls back to the pinned prebuilt packages when the stage predates it.
+    local GLIBC_ORIGIN=termux-pacman GLIBC_FILE="$TERMUX_GLIBC_FILE" GLIBC_SHA256="$TERMUX_GLIBC_SHA256"
+    local GCCLIBS_FILE="$TERMUX_GCCLIBS_FILE" GCCLIBS_SHA256="$TERMUX_GCCLIBS_SHA256"
+    [ -f "$STAGE/glibc/origin.env" ] && . "$STAGE/glibc/origin.env"
+    local ver="s${PAYLOAD_SERIES}-$(date -u +%Y%m%d)-box64-${BOX64_VERSION}-wine-${WINE_VERSION}-glibc-${GLIBC_FILE%%-aarch64*}"
     echo "$ver" > "$STAGE/VERSION"
     cat > "$STAGE/manifest.json" <<EOF
 {
@@ -301,8 +312,8 @@ step_etc() {
   "placeholder": "$PLACEHOLDER",
   "box64": {"version": "$BOX64_VERSION", "sha256": "$BOX64_SHA256", "cpu_flag": "$BOX64_CPU_FLAG"},
   "wine": {"version": "$WINE_VERSION", "sha256": "$WINE_SHA256"},
-  "glibc": {"file": "$TERMUX_GLIBC_FILE", "sha256": "$TERMUX_GLIBC_SHA256"},
-  "gcc_libs": {"file": "$TERMUX_GCCLIBS_FILE", "sha256": "$TERMUX_GCCLIBS_SHA256"}
+  "glibc": {"origin": "$GLIBC_ORIGIN", "file": "$GLIBC_FILE", "sha256": "$GLIBC_SHA256"},
+  "gcc_libs": {"origin": "$GLIBC_ORIGIN", "file": "$GCCLIBS_FILE", "sha256": "$GCCLIBS_SHA256"}
 }
 EOF
     cat "$STAGE/VERSION"

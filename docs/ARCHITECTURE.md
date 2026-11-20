@@ -153,7 +153,7 @@ Payload contents (pinned versions, SHA-256 in `payload/manifest.json`, built rep
 | Component | Source | Notes |
 |---|---|---|
 | Box64 | built from source at a pinned tag (MIT) | aarch64 glibc build, Android-friendly flags |
-| arm64 glibc | Termux-pacman `glibc-2.44-0` + `gcc-libs-glibc-14.2.1-1` **prebuilt packages**, pinned by SHA-256 (LGPL/GPL+exceptions) | already patched for Android seccomp. *Deviation:* not rebuilt from source in Phase 0; rebuilding from termux-packages recipes is tracked in STATUS. Pacman repos drop old versions, so we mirror the exact files with our releases. |
+| arm64 glibc | `glibc-2.44-0` + `gcc-libs-glibc-14.2.1-1`, built from source with Termux-pacman's recipes by `payload/build-glibc-src.sh` (LGPL/GPL+exceptions) | already patched for Android seccomp. `manifest.json` records the origin (`source`, or `termux-pacman` for a development build that used the prebuilt packages of the same recipes) and the packages' SHA-256. |
 | x86_64 runtime libs | glibc and the libs Wine needs (x86_64) | Box64 emulates or wraps them |
 | Wine | built from source, x86_64 only, a 10.x version close to Winlator's 10.10 | no X11, PulseAudio or GStreamer for Phases 0–3 |
 | WINEPREFIX | created once at build time (`wineboot`) | avoids a slow first-run `wineboot` on the phone |
@@ -193,7 +193,7 @@ STATUS.md
    Odin2 (GPL-3) is not bundled; JUCE needs its commercial/Personal license for the bundled
    instruments; Wine and glibc (LGPL) ship as separate programs with a source offer
    (`app/src/main/assets/licenses/NOTICES.md`).
-2. **Payload is built from source** (Box64, Wine) in a Linux build environment, with an Android-patched arm64 glibc. See §7 for the one deviation: Termux's prebuilt glibc package, pinned by SHA-256.
+2. **Payload is built from source** (Box64, Wine, glibc) in a Linux build environment, with an Android-patched arm64 glibc built from Termux-pacman's recipes (§7). Development builds may use Termux-pacman's prebuilt packages of the same recipes, pinned by SHA-256.
 3. **AGPL (via aap-juce) is acceptable** for the user's JUCE plugins.
 4. **App name "VST gHost"**, package `com.vstghost` (Play edition) and `com.vstghost.sideload` (sideload edition).
 5. **4 instrument + 4 effect slots** by default.

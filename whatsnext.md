@@ -172,9 +172,14 @@ open), Surge XT engine + OpenGL editor (2.2 s, 0.1 core), Pedal Faster Windows b
    - 2 16 KB pages: verified (ELF segments 16/64 KB, zipalign -P 16 passes). Nothing to do.
    - 3 About screen (⋮ → About): version, Terms, Privacy, Notices, every license text from assets.
    - 4 `docs/privacy-policy.md`, `docs/terms-of-service.md` (also in the app), `docs/play-console-answers.md`.
-   - 5 glibc from source: `payload/build-glibc-src.sh` (setup as root → tools → build). Setup on
-     Ubuntu 24.04 needed the termux script's "resolute" names translated; rerun `wsl -u root bash
-     payload/build-glibc-src.sh setup`, then `tools` and `build` as yourself (long).
+   - 5 glibc from source: done. `payload/build-glibc-src.sh` (`setup` and `perms` as root, then
+     `tools` and `build` as yourself) builds glibc 2.44 and gcc-libs 14.2.1 with Termux-pacman's
+     recipes (glibc ~20 min, gcc-libs ~3 h on 32 threads). The script patches the gcc-libs recipe
+     for a glibc 2.44 host (no libsanitizer, C++17 for libcody, idempotent install step; see its
+     comments); `CONTINUE=1` resumes after a failed install without recompiling. The payload is
+     built with `TERMUX_GLIBC_LOCAL`/`TERMUX_GCCLIBS_LOCAL` pointing at the packages in
+     `~/vstghost-payload-work/glibc-src/out/`; `manifest.json` then records `"origin": "source"`
+     and the local packages' SHA-256.
    - 6 Setup progress dialog with a bar while the runtime unpacks; Retry / Report on failure.
    - 7 First-run card (once; pref `onboarded`).
    - 8 ⋮ → Report a problem…: zip (versions, device, plugins, slots, host logs, logcat, sets, prefs)

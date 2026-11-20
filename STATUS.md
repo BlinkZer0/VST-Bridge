@@ -55,7 +55,7 @@ Still open from Phase 3: a third-party MIDI app playing our virtual device.
 ## Open questions / risks
 
 1. Memory: the Wine session plus one host per active slot (~150–230 MB each).
-2. **Deviation:** glibc is Termux's prebuilt package; rebuild from source before a public release.
+2. glibc is built from source (`payload/build-glibc-src.sh`, Termux-pacman's recipes) for release payloads; development builds may use the prebuilt packages of the same recipes.
 3. The Play edition's loader path is primary-user only.
 4. **Deviation:** the x86_64 runtime libraries for Wine's Wayland driver/FreeType are copied from the Ubuntu 24.04 build host (versions in `x64libs/MANIFEST`), not built from source.
 5. The sideload edition has minSdk 29 > targetSdk 28; reinstalled and re-checked 2026-11-19 (Dexed, Surge XT).
