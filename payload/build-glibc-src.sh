@@ -113,6 +113,12 @@ case "${1:-}" in
             sed -i '/CXXFLAGS+=" -I${TERMUX_PREFIX}\/include -L${TERMUX_PREFIX}\/lib"/a export CXX="${CXX} -std=gnu++17"' gpkg/gcc-libs/build.sh
             grep -q 'export CXX="${CXX} -std=gnu++17"' gpkg/gcc-libs/build.sh || { echo "could not patch gpkg/gcc-libs/build.sh"; exit 1; }
         fi
+        # GCC 14's libsanitizer does not compile against glibc 2.44 headers (struct termio is gone);
+        # the sanitizer runtimes are not part of what the payload uses (libstdc++, libgcc_s, libatomic).
+        if ! grep -q -- "--disable-libsanitizer" gpkg/gcc-libs/build.sh; then
+            sed -i 's|--disable-libssp \|--disable-libssp --disable-libsanitizer \|' gpkg/gcc-libs/build.sh
+            grep -q -- "--disable-libsanitizer" gpkg/gcc-libs/build.sh || { echo "could not patch gpkg/gcc-libs/build.sh (libsanitizer)"; exit 1; }
+        fi
         log "building: $PACKAGES"
         # -I: install dependencies from the repo instead of building the world; --library glibc:
         # the glibc-based package set; --format pacman: the .pkg.tar.xz step_glibc understands.
