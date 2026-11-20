@@ -51,6 +51,9 @@ What to enter in the Play Console forms, matching what the app actually does (20
 
 ## Store listing
 
+Listing text (full description, release notes) and the assets made for 1.0.0-beta1 (icon,
+feature graphic, five screenshots) are in [store-listing.md](store-listing.md).
+
 - **Category:** Music & Audio.
 - **Short description (80 chars):** Run VST3 instruments and effects on your phone, with a keyboard
   and MIDI in.
