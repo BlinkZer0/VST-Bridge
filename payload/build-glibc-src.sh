@@ -116,7 +116,7 @@ case "${1:-}" in
         # GCC 14's libsanitizer does not compile against glibc 2.44 headers (struct termio is gone);
         # the sanitizer runtimes are not part of what the payload uses (libstdc++, libgcc_s, libatomic).
         if ! grep -q -- "--disable-libsanitizer" gpkg/gcc-libs/build.sh; then
-            sed -i 's|--disable-libssp \|--disable-libssp --disable-libsanitizer \|' gpkg/gcc-libs/build.sh
+            sed -i 's/--disable-libssp /--disable-libssp --disable-libsanitizer /' gpkg/gcc-libs/build.sh
             grep -q -- "--disable-libsanitizer" gpkg/gcc-libs/build.sh || { echo "could not patch gpkg/gcc-libs/build.sh (libsanitizer)"; exit 1; }
         fi
         log "building: $PACKAGES"
