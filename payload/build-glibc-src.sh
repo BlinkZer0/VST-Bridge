@@ -127,8 +127,8 @@ case "${1:-}" in
         # CONTINUE=1: resume a build whose compile finished (termux build-package.sh -c skips
         # extraction, configure and the recipe's pre-configure step, then runs make, make install
         # and packaging). The recipe sets its compiler flags in pre-configure; GCC's sub-configures
-        # refuse to continue when CFLAGS differ from the recorded ones, so the make step re-applies
-        # them when they are missing (the build system appends trailing blanks after pre-configure;
+        # refuse to continue when CFLAGS differ from the recorded ones, so the configure step (which
+        # termux runs again on a continued build) re-applies them when they are missing (the build system appends trailing blanks after pre-configure;
         # the flags go in front of those so the strings match exactly).
         if ! grep -q "vstghost-continue" gpkg/gcc-libs/build.sh; then
             cat > /tmp/vg-gcclibs-make.sh <<'BLOCK'
@@ -141,7 +141,7 @@ case "${1:-}" in
 		[[ "$CXX" == *"-std=gnu++17"* ]] || export CXX="${CXX} -std=gnu++17"
 	fi
 BLOCK
-            sed -i '/^termux_step_make() {/r /tmp/vg-gcclibs-make.sh' gpkg/gcc-libs/build.sh
+            sed -i '/^termux_step_configure() {/r /tmp/vg-gcclibs-make.sh' gpkg/gcc-libs/build.sh
             grep -q "vstghost-continue" gpkg/gcc-libs/build.sh || { echo "could not patch the gcc-libs make step"; exit 1; }
         fi
         cont=""
