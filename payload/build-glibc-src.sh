@@ -125,6 +125,9 @@ case "${1:-}" in
         sed -i -e '/libsanitizer\/{a,l,ub}san/d' -e 's|^\([[:space:]]*\)make -C \$TERMUX_HOST_PLATFORM/libsanitizer.*|\1:|' gpkg/gcc-libs/build.sh
         grep -q "libsanitizer/{a,l,ub}san" gpkg/gcc-libs/build.sh && { echo "could not patch the gcc-libs install step"; exit 1; }
         grep -q "make -C .*libsanitizer" gpkg/gcc-libs/build.sh && { echo "could not patch the gcc-libs install step (make lines)"; exit 1; }
+        # A resumed install step (CONTINUE=1) finds the symlinks an earlier attempt already made.
+        sed -i 's/^\([[:space:]]*\)ln -s /\1ln -sf /' gpkg/gcc-libs/build.sh
+        grep -q "ln -s [^f]" gpkg/gcc-libs/build.sh && { echo "could not patch the gcc-libs install step (ln)"; exit 1; }
         # CONTINUE=1: resume a build whose compile finished (termux build-package.sh -c skips
         # extraction, configure and the recipe's pre-configure step, then runs make, make install
         # and packaging). The recipe sets its compiler flags in pre-configure; GCC's sub-configures
