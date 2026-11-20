@@ -209,7 +209,10 @@ class Payload(private val context: Context) {
             "TMPDIR" to "$r/tmp",
             "USER" to "vstghost",
             "TZ" to "UTC",
-            "LANG" to "C",
+            // UTF-8: Wine maps Windows file names to the unix file system through the C library's
+            // locale; with plain "C" anything non-ASCII (e.g. a preset called "µcomputer.fxp") is
+            // unencodable and installers fail renaming what they just wrote.
+            "LANG" to "C.UTF-8",
             "PATH" to "$r/wine/bin:/system/bin",
             "LD_LIBRARY_PATH" to if (isPlay) shimDir.path else "$r/glibc/lib",
             "BOX64_LD_LIBRARY_PATH" to "$r/box64/x64lib:$r/x64libs",

@@ -219,11 +219,13 @@ class PluginImport(private val ctx: Context) {
         val exe = File(tmp, "installer." + f.extension.lowercase())
         f.copyTo(exe, overwrite = true)
         val winExe = "Z:" + exe.path.replace('/', '\\')
+        val innoLog = File(ctx.filesDir, "installer-inno.log").apply { delete() }
         val vst3Dir = File(payload.root, "prefix/drive_c/Program Files/Common Files/VST3").apply { mkdirs() }
         val before = vst3Dir.listFiles()?.map { it.name }?.toSet().orEmpty()
         val args = when (kind) {
             "msi" -> listOf("msiexec", "/i", winExe, "/qn", "/norestart")
-            "inno" -> listOf(winExe, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/NOCANCEL")
+            "inno" -> listOf(winExe, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/NOCANCEL",
+                "/LOG=Z:" + innoLog.path.replace('/', '\\'))
             "nsis" -> listOf(winExe, "/S")
             else -> listOf(winExe, "/S", "/VERYSILENT", "/quiet")   // the usual flags; a GUI-only installer times out
         }
@@ -233,6 +235,11 @@ class PluginImport(private val ctx: Context) {
         pb.environment().remove("LD_PRELOAD")
         pb.environment().putAll(payload.environment(mapOf(
             "WINEDEBUG" to "-all,err+module", "WINEDLLOVERRIDES" to "mscoree=d;mshtml=d;winemenubuilder.exe=d")))
+        // Developer hook: files/installer.env (KEY=VALUE per line) overrides the installer's environment,
+        // for trying Box64/Wine settings over adb without rebuilding the app.
+        File(ctx.filesDir, "installer.env").takeIf { it.isFile }?.readLines()
+            ?.mapNotNull { l -> l.trim().takeIf { it.isNotEmpty() && !it.startsWith("#") && '=' in it } }
+            ?.forEach { l -> pb.environment()[l.substringBefore('=')] = l.substringAfter('=') }
         val p = pb.start()
         val tail = ArrayDeque<String>()
         val log = File(ctx.filesDir, "installer.log").printWriter()   // the whole output, for problem reports
@@ -245,9 +252,12 @@ class PluginImport(private val ctx: Context) {
             p.destroyForcibly()
             return Result(emptyList(), "${f.name}: the installer did not finish in 10 minutes (it probably needs a window, which is not supported)")
         }
+        // Inno Setup's own log says which step failed; keep its tail with the installer output.
+        val innoTail = if (innoLog.isFile) innoLog.readLines().takeLast(12) else emptyList()
+        if (innoTail.isNotEmpty()) File(ctx.filesDir, "installer.log").appendText("\n--- Inno Setup log (tail) ---\n" + innoTail.joinToString("\n") + "\n")
         val fresh = vst3Dir.listFiles().orEmpty().filter { it.name !in before && it.name.lowercase().endsWith(".vst3") }
         if (fresh.isEmpty()) {
-            val log = synchronized(tail) { tail.joinToString(" | ") }.take(300)
+            val log = (innoTail.takeLast(4).takeIf { it.isNotEmpty() } ?: synchronized(tail) { tail.toList() }).joinToString(" | ").take(400)
             return Result(emptyList(), "${f.name}: the installer finished (exit ${p.exitValue()}) but left no .vst3 in Common Files\\VST3" +
                 if (log.isNotEmpty()) " · $log" else "")
         }

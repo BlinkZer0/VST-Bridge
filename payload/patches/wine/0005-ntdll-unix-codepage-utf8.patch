@@ -1,0 +1,17 @@
+ntdll: always use UTF-8 for unix file names.
+
+VST gHost runs on Android, whose file system names are UTF-8, but the unix-side ntdll is a
+Linux build that derives the code page from the C locale; a 32-bit installer child ended up with
+ASCII and could not rename to a name such as "µcomputer.fxp". Compile the Android branch.
+
+--- a/dlls/ntdll/unix/env.c
++++ b/dlls/ntdll/unix/env.c
+@@ -208,7 +208,7 @@
+     nfc_table = read_nls_file( "normnfc.nls" );
+ }
+ 
+-#elif defined(__ANDROID__)  /* Android always uses UTF-8 */
++#elif defined(__ANDROID__) || 1  /* Android always uses UTF-8; so does VST gHost (Android file system, LANG may be unset in children) */
+ 
+ static void init_unix_codepage(void) { }
+ 
