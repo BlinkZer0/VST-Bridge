@@ -128,6 +128,11 @@ case "${1:-}" in
         # A resumed install step (CONTINUE=1) finds the symlinks an earlier attempt already made.
         sed -i 's/^\([[:space:]]*\)ln -s /\1ln -sf /' gpkg/gcc-libs/build.sh
         grep -q "ln -s [^f]" gpkg/gcc-libs/build.sh && { echo "could not patch the gcc-libs install step (ln)"; exit 1; }
+        # The recipe folds a lib32 folder into lib at the end. gcc is built --disable-multilib, so it never
+        # puts anything there; on this prefix lib32 is glibc32's (audit, gconv, locale...), whose entries
+        # already exist in lib, and the move fails. Leave it alone.
+        sed -i -e 's|mv \$TERMUX_PREFIX/lib32/\* \$TERMUX_PREFIX/lib$|:|' -e 's|rm -fr \$TERMUX_PREFIX/lib32$|:|' gpkg/gcc-libs/build.sh
+        grep -q "lib32/\*" gpkg/gcc-libs/build.sh && { echo "could not patch the gcc-libs install step (lib32)"; exit 1; }
         # CONTINUE=1: resume a build whose compile finished (termux build-package.sh -c skips
         # extraction, configure and the recipe's pre-configure step, then runs make, make install
         # and packaging). The recipe sets its compiler flags in pre-configure; GCC's sub-configures
