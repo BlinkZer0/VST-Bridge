@@ -486,11 +486,16 @@ class PlayerActivity : AppCompatActivity() {
 
     /** The runtime unpacks for about a minute on the first start (and after updates): say so, with progress. */
     private fun installWithProgress(): Payload.InstallResult {
-        val bar = com.google.android.material.progressindicator.LinearProgressIndicator(this).apply { max = 1000; isIndeterminate = true }
-        val text = TextView(this).apply { text = "Unpacking the Windows runtime (Wine). This happens once, and again after an app update.\nAbout a minute…"; setPadding(dp(24), dp(8), dp(24), dp(8)) }
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(text); addView(bar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(6)).apply { leftMargin = dp(24); rightMargin = dp(24); bottomMargin = dp(16) }) }
-        val dialog = MaterialAlertDialogBuilder(this).setTitle("Setting up").setView(box).setCancelable(false).create()
-        ui.post { if (!isFinishing) dialog.show() }
+        // Runs on the io thread; the views and the dialog are made on the UI thread.
+        lateinit var bar: com.google.android.material.progressindicator.LinearProgressIndicator
+        lateinit var dialog: androidx.appcompat.app.AlertDialog
+        onMain {
+            bar = com.google.android.material.progressindicator.LinearProgressIndicator(this).apply { max = 1000; isIndeterminate = true }
+            val text = TextView(this).apply { text = "Unpacking the Windows runtime (Wine). This happens once, and again after an app update.\nAbout a minute…"; setPadding(dp(24), dp(8), dp(24), dp(8)) }
+            val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(text); addView(bar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(6)).apply { leftMargin = dp(24); rightMargin = dp(24); bottomMargin = dp(16) }) }
+            dialog = MaterialAlertDialogBuilder(this).setTitle("Setting up").setView(box).setCancelable(false).create()
+            if (!isFinishing) dialog.show()
+        }
         val r = payload.install { done, total ->
             if (total > 0) ui.post { bar.isIndeterminate = false; bar.setProgressCompat((done * 1000 / total).toInt(), true) }
             true

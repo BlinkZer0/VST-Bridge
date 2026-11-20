@@ -36,6 +36,8 @@ class EditorActivity : Activity() {
     companion object {
         const val EXTRA_SLOT = "slot"
         private const val TAG = "VSTGHOST"
+        /** How long the screen may stay in the background before its editor is closed. */
+        private const val POWER_CLOSE_MS = 30_000L
     }
 
     private var slot = 0
@@ -43,6 +45,16 @@ class EditorActivity : Activity() {
     private lateinit var title: TextView
     private lateinit var info: TextView
     @Volatile private var opened = false
+    @Volatile private var paused = false
+    /** The editor was closed to save power while this screen was in the background. */
+    @Volatile private var closedForPower = false
+    private val ui = android.os.Handler(android.os.Looper.getMainLooper())
+    private val powerClose = Runnable {
+        if (!paused || !opened || isFinishing) return@Runnable
+        opened = false
+        closedForPower = true
+        thread(name = "editor-close") { Bridge.get(this, slot).request("editor_close", 10_000) }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,7 +85,13 @@ class EditorActivity : Activity() {
         setContentView(root)
         view.onPicture = { w, h, fps -> info.text = "${w}×$h · ${"%.0f".format(fps)} fps" }
 
+        openEditor(first = true)
+    }
+
+    /** Opens the slot's editor window; [first] also runs the test hooks from the intent extras. */
+    private fun openEditor(first: Boolean) {
         val bridge = Bridge.get(this, slot)
+        runOnUiThread { title.text = "Opening editor…" }
         thread(name = "editor-open") {
             val t0 = System.nanoTime()
             val resp = if (bridge.isRunning) bridge.request("editor_open", 30_000) else null
@@ -81,6 +99,7 @@ class EditorActivity : Activity() {
             Log.i(TAG, "editor_open slot $slot: $resp ($ms ms) display=${NativeEngine.wlStats()}")
             val j = resp?.let { runCatching { JSONObject(it) }.getOrNull() }
             opened = bridge.isRunning && j?.optBoolean("ok") == true
+            closedForPower = false
             runOnUiThread {
                 when {
                     !bridge.isRunning -> title.text = "No plugin is running in this slot"
@@ -91,7 +110,10 @@ class EditorActivity : Activity() {
                     }
                 }
                 EditorDisplay.error?.let { title.text = "Display error: $it" }
+                // Sent to the background again while the editor was opening: hide it now.
+                if (opened && paused) thread(name = "editor-hide") { bridge.request("editor_visible\n0", 5_000) }
             }
+            if (!first) return@thread
             val every = intent.getIntExtra("dump", 0)
             val taps = intent.getStringExtra("taps")?.split("/")?.mapNotNull { t ->
                 t.split(",").takeIf { it.size == 2 }?.let { Pair(it[0].toFloat(), it[1].toFloat()) } } ?: emptyList()
@@ -111,17 +133,28 @@ class EditorActivity : Activity() {
 
     override fun onResume() {
         super.onResume(); view.start()
-        if (opened) thread(name = "editor-show") { Bridge.get(this, slot).request("editor_visible\n1", 5_000) }
+        paused = false
+        ui.removeCallbacks(powerClose)
+        when {
+            closedForPower -> openEditor(first = false)
+            opened -> thread(name = "editor-show") { Bridge.get(this, slot).request("editor_visible\n1", 5_000) }
+        }
     }
     override fun onPause() {
         super.onPause(); view.stop()
-        // Screen off or another app in front: hide the Wine window so the editor stops rendering
-        // (Direct2D editors cost about two cores while they paint). It is shown again on resume.
-        if (opened && !isFinishing) thread(name = "editor-hide") { Bridge.get(this, slot).request("editor_visible\n0", 5_000) }
+        paused = true
+        if (isFinishing || !opened) return
+        // Screen off or another app in front: hide the Wine window right away, and if we stay in the
+        // background, close the editor. Hiding alone saves little (a plugin keeps repainting its own
+        // buffer on its timers: Dexed's host sits at ~1.6 cores hidden, ~0.03 closed); closing is what
+        // stops it. The editor is reopened on resume.
+        thread(name = "editor-hide") { Bridge.get(this, slot).request("editor_visible\n0", 5_000) }
+        ui.postDelayed(powerClose, POWER_CLOSE_MS)
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        ui.removeCallbacks(powerClose)
         if (isFinishing && opened) {
             val bridge = Bridge.get(this, slot)
             thread(name = "editor-close") { bridge.request("editor_close", 10_000) }
