@@ -6,8 +6,8 @@
 # point TERMUX_GLIBC_LOCAL / TERMUX_GCCLIBS_LOCAL at the results (see versions.env).
 #
 #   payload/build-glibc-src.sh setup     once, as root (WSL: `wsl -u root`): apt packages
-#   payload/build-glibc-src.sh perms     as root: only the ownership part of 'setup' (for a setup
-#                                        that ran before this step existed)
+#   payload/build-glibc-src.sh perms     as root: the qemu-user + ownership part of 'setup' only (for
+#                                        a setup that ran before these steps existed)
 #   payload/build-glibc-src.sh tools     once, as the normal user: Android NDK + CGCT toolchain
 #   payload/build-glibc-src.sh build     as the normal user: builds the packages (long: glibc ~20 min,
 #                                        gcc-libs builds GCC, 1–2 h on 32 cores)
@@ -57,6 +57,18 @@ hand_over_prefix() {
     log "/data, /data/data, /data/data/com.termux owned by $user"
 }
 
+# glibc's `make install` runs the freshly built aarch64 localedef (through the new ld.so) to make
+# the C.UTF-8 locale, and ldconfig; termux-pacman's CI does the same under qemu-user with binfmt.
+# Without it the build ends in "Exec format error".
+install_qemu() {
+    if [ ! -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+        apt-get install -y qemu-user-static binfmt-support
+        update-binfmts --enable qemu-aarch64 || true
+    fi
+    [ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ] || { echo "qemu-aarch64 binfmt is not registered (is systemd/binfmt_misc enabled in WSL?)"; exit 1; }
+    log "qemu-aarch64 binfmt registered"
+}
+
 case "${1:-}" in
     setup)
         [ "$(id -u)" = 0 ] || { echo "run 'setup' as root (wsl -u root)"; exit 1; }
@@ -68,10 +80,12 @@ case "${1:-}" in
             sed -i -e 's/resolute/noble/g' -e 's/python3\.14-venv/python3-venv/g' -e 's/python3\.14/python3/g' scripts/setup-ubuntu.sh
         fi
         ./scripts/setup-ubuntu.sh
+        install_qemu
         hand_over_prefix
         ;;
     perms)
         [ "$(id -u)" = 0 ] || { echo "run 'perms' as root (wsl -u root)"; exit 1; }
+        install_qemu
         hand_over_prefix
         ;;
     tools)
