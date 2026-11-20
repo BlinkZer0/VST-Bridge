@@ -19,7 +19,7 @@ GLIBC_PACKAGES_REPO=https://github.com/termux-pacman/glibc-packages.git
 GLIBC_PACKAGES_COMMIT=3d99b6682f8c74ad82bda39315325189d8d34966   # main, 2026-10-22
 TERMUX_PACKAGES_REPO=https://github.com/termux/termux-packages.git
 TERMUX_PACKAGES_COMMIT=2509fe96789c8f87254f50d1e2f24043cc5cf5f1  # master, 2026-11-19
-PACKAGES="${PACKAGES:-glibc gcc-libs-glibc}"
+PACKAGES="${PACKAGES:-glibc gcc-libs}"   # recipe names (gpkg/<name>); the built packages get the -glibc suffix
 
 W="${VG_WORK:-$HOME/vstghost-payload-work}/glibc-src"
 OUT="${OUT:-$W/out}"
