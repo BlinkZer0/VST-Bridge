@@ -28,7 +28,10 @@ Choices that apply across the design:
 
 - **arm64-v8a only**, Kotlin + C++20 (NDK, CMake), Oboe.
 - **Headless Wine through Phase 3.** No X server, no PulseAudio: audio never goes through Wine's audio stack. The prefix sets `HKCU\Software\Wine\Drivers\Graphics=null`, so Wine uses its **null graphics driver**: invisible windows and message loops work. Without that setting, Wine's no-driver path refuses every non-message window, including JUCE's hidden message window. **Proven in Phase 1:** 4/4 JUCE plugins load and process headless.
-- **64-bit Windows plugins only in v1.** No WoW64 and no Box86. 32-bit plugins are reported as unsupported.
+- **64-bit Windows plugins only in v1.** The bridge host is 64-bit; 32-bit plugins are reported as
+  unsupported. Wine itself is a WoW64 build (payload series 3: i386 + x86_64 PE sides, one x86_64
+  unix side), so 32-bit *programs* such as plugin installers' launchers do run, emulated by Box64 as
+  part of the 64-bit process; no Box86/Box32.
 - **One host process per plugin instance** (yabridge's default), so a plugin crash takes down only its own slot. Grouping several plugins in one host can come later if memory use requires it.
 - **Bridge host: a plain x86_64 Windows exe built with MinGW (decided in Phase 1, revised from "winelib").** Phase 1 needs no Linux syscalls, and a PE exe is independent of Wine's build internals: yabridge's winelib host has repeatedly broken on new Wine versions. The VST3 hosting core (`host/src/vst3host.*`) is kept separate from transport. **Decided in Phase 2:**
   - **Transport:** a file-backed shared mapping (`files/ipc/slotN.shm`): the engine `mmap`s it, and the host uses `CreateFileMapping`, which Wine maps `MAP_SHARED`.

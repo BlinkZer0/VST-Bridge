@@ -109,6 +109,7 @@ class PluginImport(private val ctx: Context) {
         }
         val out = mutableListOf<Candidate>()
         val seen = HashSet<String>()
+        val wow64 = hasWow64()
         fun add(c: Candidate) { if (seen.add(c.file.path)) out += c }
         for ((root, label) in roots) {
             if (!root.isDirectory) continue
@@ -132,7 +133,8 @@ class PluginImport(private val ctx: Context) {
                         n.endsWith(".zip") && f.isFile && f.length() < 600L shl 20 -> Candidate(f, label, true, "zip")
                         n.endsWith(".7z") && f.isFile -> Candidate(f, label, false, "7z archive: unpack it first")
                         n.endsWith(".exe") && f.isFile && peMachine(f) == 0x14c ->
-                            Candidate(f, label, false, "32-bit installer program: cannot run here (64-bit only); install on a PC and import the .vst3 as a zip")
+                            if (wow64) Candidate(f, label, true, "installer (32-bit launcher): runs under Wine")
+                            else Candidate(f, label, false, "32-bit installer program: this runtime cannot run it (64-bit only); install on a PC and import the .vst3 as a zip")
                         (n.endsWith(".exe") || n.endsWith(".msi")) && f.isFile -> Candidate(f, label, true, "installer: runs under Wine")
                         else -> null
                     } ?: return@forEach
@@ -178,6 +180,9 @@ class PluginImport(private val ctx: Context) {
         return when { "Inno Setup" in head -> "inno"; "Nullsoft" in head -> "nsis"; else -> "exe" }
     }
 
+    /** True when the installed Windows runtime has the i386 side (WoW64), so 32-bit programs run. */
+    private fun hasWow64() = File(Payload(ctx).root, "wine/lib/wine/i386-windows").isDirectory
+
     /** The PE machine type of a Windows program: 0x14c = x86 (32-bit), 0x8664 = x64, null = not a PE file. */
     private fun peMachine(f: File): Int? = runCatching {
         java.io.RandomAccessFile(f, "r").use { r ->
@@ -202,10 +207,10 @@ class PluginImport(private val ctx: Context) {
      */
     fun runInstaller(f: File, status: (String) -> Unit): Result {
         val kind = installerKind(f) ?: return Result(emptyList(), "${f.name}: not an installer")
-        // The Windows runtime runs 64-bit code only (no WoW64). Inno Setup and NSIS installers are
-        // 32-bit programs even when the plugin inside is 64-bit, so they cannot run here at all.
-        if (kind != "msi" && peMachine(f) == 0x14c) return Result(emptyList(),
-            "${f.name} is a 32-bit installer program, which VST gHost cannot run (it runs 64-bit code only). " +
+        // Inno Setup and NSIS installers are 32-bit programs even when the plugin inside is 64-bit;
+        // they need the WoW64 runtime (payload series 3+: wine/lib/wine/i386-windows present).
+        if (kind != "msi" && peMachine(f) == 0x14c && !hasWow64()) return Result(emptyList(),
+            "${f.name} is a 32-bit installer program and this runtime runs 64-bit code only. " +
             "Run the installer on a Windows PC, zip the .vst3 bundle it installs (Program Files\\Common Files\\VST3), " +
             "and import that zip here.")
         val payload = Payload(ctx)
