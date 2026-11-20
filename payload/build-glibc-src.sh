@@ -6,6 +6,9 @@
 # point TERMUX_GLIBC_LOCAL / TERMUX_GCCLIBS_LOCAL at the results (see versions.env).
 #
 #   payload/build-glibc-src.sh setup     once, as root (WSL: `wsl -u root`): apt packages
+#                                        (termux's setup-ubuntu.sh ends with an apt autoremove that
+#                                        takes Ubuntu's aarch64 cross compiler with it: run
+#                                        payload/setup-ubuntu.sh again afterwards)
 #   payload/build-glibc-src.sh perms     as root: the qemu-user + ownership part of 'setup' only (for
 #                                        a setup that ran before these steps existed)
 #   payload/build-glibc-src.sh tools     once, as the normal user: Android NDK + CGCT toolchain
