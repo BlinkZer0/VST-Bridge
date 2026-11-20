@@ -22,3 +22,5 @@ results-audio/
 .vscode/
 
 .kotlin/
+keystore.properties
+payload_pack/src/

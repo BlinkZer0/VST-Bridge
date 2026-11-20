@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
 }
@@ -5,6 +7,13 @@ plugins {
 // Output of payload/build.sh (see payload/README.md). Optional at build time:
 // without it the APK still builds, and the app reports "no payload".
 val payloadOut = rootProject.file(providers.gradleProperty("vstghost.payloadOut").get())
+
+// Release signing: keystore.properties in the repository root (git-ignored; see docs/release.md).
+// Absent, release builds sign with the debug key so they still install for testing.
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.isFile) f.inputStream().use { load(it) }
+}
 
 android {
     namespace = "com.vstghost"
@@ -15,7 +24,7 @@ android {
         applicationId = "com.vstghost"
         minSdk = 29  // required by the AAP library (Phase 3)
         versionCode = 1
-        versionName = "0.0.1-phase0"
+        versionName = "1.0.0-beta1"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild {
             cmake {
@@ -51,7 +60,34 @@ android {
     sourceSets {
         getByName("play") {
             jniLibs.srcDir(File(payloadOut, "jnilibs"))
+        }
+        // Debug APKs carry the payload archive as a plain asset (assemble… does not merge asset
+        // packs into APKs); the release bundle delivers it as the install-time pack below. The app
+        // reads both through AssetManager, so Payload.kt does not care which.
+        maybeCreate("playDebug").apply {
             assets.srcDir(File(payloadOut, "play-assets"))
+        }
+    }
+    // The payload archive travels as an install-time asset pack (payload_pack/, see docs/release.md).
+    assetPacks += ":payload_pack"
+
+    signingConfigs {
+        if (keystoreProps.isNotEmpty()) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = if (keystoreProps.isNotEmpty()) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
     }
 

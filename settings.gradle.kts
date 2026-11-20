@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "VST gHost"
 include(":app")
+include(":payload_pack")

@@ -119,5 +119,5 @@ add_compile_options(-fbracket-depth=1024)
 # Projucer-project test case (GPL-3, test only, never shipped): Dexed 0.9.6 still has a .jucer.
 # Build with -Pvg.nativePlugins=dexedjucer to exercise VgJucer.cmake.
 vg_add_juce_project(dexedjucer TEST_ONLY JUCER Dexed.jucer
-    URL https://github.com/asb2m10/dexed/archive/refs/tags/v0.9.6.tar.gz
-    SHA256 b1104a8e5a0403edd61e51e4f8476d0b863d9cef6b07721a1814cf6d18c8edf7)
+    GIT https://github.com/asb2m10/dexed.git COMMIT 11ae4d7ef597b2d52f45e59ab56b342252d0bd88   # v0.9.6
+    SUBMODULES libs/tuning-library libs/surgesynthteam_tuningui)
