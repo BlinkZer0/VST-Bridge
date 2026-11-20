@@ -154,6 +154,13 @@ open), Surge XT engine + OpenGL editor (2.2 s, 0.1 core), Pedal Faster Windows b
      Verified on the phone: surge-xt-setup.exe → "Installed Surge XT, Surge XT Effects", 497 MB of
      factory data in ProgramData, editor's patch browser steps through the factory patches.
      The app refuses 32-bit installers only when the runtime has no i386 side.
+     Corpus regression pass on series 3 (2026-11-20, `results-phone-s3`): 30/30 import and load,
+     0 underruns, 24/25 editors open (median 1.36 s vs 1.40 s before; render 188 µs vs 180 µs).
+     The one editor failure was a version clash, not the runtime: the corpus zip's Surge XT 1.3.4
+     overwrote the installer's 1.4.0 plugin while the 1.4.0 data stayed in ProgramData, and 1.3.4
+     crashes (0xC0000005) opening its editor on that data. Re-running the installer restored 1.4.0
+     (editor 2.1 s). Rough edge: a plugin and its ProgramData must match; importing an older zip
+     over an installer-installed plugin is not detected.
    - 14 Odin2 native: builds and its modal menus work (nested Looper, `JuceModalLoop.kt` +
      `vgn_adapter.cpp`), but Odin2 is GPL-3 and the app is proprietary → not bundled. `.jucer`
      projects: `VgJucer.cmake` + `JUCER` option of `vg_add_juce_project` (test entry `dexedjucer`,

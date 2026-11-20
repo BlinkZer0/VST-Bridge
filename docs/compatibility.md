@@ -58,7 +58,7 @@ within 90 s after the editor was closed (Dexed, ProM, glBars, DragonflyEarlyRefl
 | Plugin | Audio | Editor |
 |---|---|---|
 | Dexed (JUCE 8, Direct2D emulated) | yes | complete, taps work; 12–14 s open, ≈2 cores while open |
-| Surge XT (OpenGL) | yes, 2081 parameters | full editor, 2.2 s open; factory patches/wavetables when installed from surge-xt-setup.exe (Install plugin…, WoW64) |
+| Surge XT (OpenGL) | yes, 2081 parameters | full editor, 2.2 s open; factory patches/wavetables when installed from surge-xt-setup.exe (Install plugin…, WoW64). Do not import the 1.3.4 zip over it: 1.3.4 crashes on 1.4.0 data |
 | Surge XT Effects | yes | default skin (same data-folder caveat) |
 | Pedal Faster, Windows build (JUCE 9, GDI) | yes | complete, 1.7 s open |
 | No Strings, Windows build (JUCE 8.0.17) | yes, 55 parameters, 0.6 s load | blank: the editor is a WebView2 (Edge/Chromium) web UI, which the Wine prefix cannot provide — use the native build |
