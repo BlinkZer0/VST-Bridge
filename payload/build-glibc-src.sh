@@ -101,6 +101,12 @@ case "${1:-}" in
         NDK_DIR="$(ls -d "$HOME"/lib/android-ndk-* 2>/dev/null | sort | tail -1 || true)"
         [ -n "$NDK_DIR" ] || { echo "no NDK under $HOME/lib: run 'tools' first"; exit 1; }
         export NDK="$NDK_DIR" ANDROID_HOME="$HOME/lib/android-sdk"
+        # CGCT's cross g++ (16.x) compiles C++20 by default; GCC 14's libcody is not C++20-clean
+        # (u8"" literals become char8_t). Build gcc-libs as gnu++17, as its own era's compilers did.
+        if ! grep -q "std=gnu++17" gpkg/gcc-libs/build.sh; then
+            sed -i 's|CXXFLAGS+=" -I${TERMUX_PREFIX}/include|CXXFLAGS+=" -std=gnu++17 -I${TERMUX_PREFIX}/include|' gpkg/gcc-libs/build.sh
+            grep -q "std=gnu++17" gpkg/gcc-libs/build.sh || { echo "could not patch gpkg/gcc-libs/build.sh"; exit 1; }
+        fi
         log "building: $PACKAGES"
         # -I: install dependencies from the repo instead of building the world; --library glibc:
         # the glibc-based package set; --format pacman: the .pkg.tar.xz step_glibc understands.
