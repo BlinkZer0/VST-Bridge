@@ -162,6 +162,9 @@ open), Surge XT engine + OpenGL editor (2.2 s, 0.1 core), Pedal Faster Windows b
    - 8 ⋮ → Report a problem…: zip (versions, device, plugins, slots, host logs, logcat, sets, prefs)
      via FileProvider + share sheet.
    - 9 Audio focus (PlaybackService): mute on loss, duck to 25 %, restore on gain; notes released.
+     After a permanent loss the next note asks for focus again (Android never hands it back by
+     itself). Verified on the phone 2026-11-19: a podcast app started over a held note → loss
+     logged, note released; after pausing it, one key press put VST gHost back on the focus stack.
      Route changes were already handled (Oboe reopen).
    - 11 ⋮ → MIDI settings…: input channel filter, route-by-channel (ch N → Inst N), velocity curve.
    - 12 Editor power: while EditorActivity is paused (screen off / other app) the Wine window is
@@ -170,8 +173,7 @@ open), Surge XT engine + OpenGL editor (2.2 s, 0.1 core), Pedal Faster Windows b
      CPU with the editor open, ~183 % hidden (plugins keep repainting their own buffers on timers),
      3.5 % closed — so the close is what saves the battery.
    - Phone checks done 2026-11-19 for 3 (About), 6 (Setting up dialog with bar), 7 (first-run card),
-     8 (report zip → share sheet), 11 (MIDI settings dialog), 12 (numbers above). 9 (audio focus)
-     cannot be driven over adb; try a phone call or another music app while a note is held.
+     8 (report zip → share sheet), 9 (audio focus, see above), 11 (MIDI settings dialog), 12 (numbers above).
    - 1 Release build — DONE: `bundlePlayRelease` → 127 MB signed bundle (upload key at
      `C:/Users/Randy/vstghost-keys/upload.jks`, password in the git-ignored `keystore.properties`),
      payload as the install-time asset pack `payload`, R8 with `app/proguard-rules.pro`, mapping.txt.

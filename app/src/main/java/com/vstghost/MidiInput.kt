@@ -62,7 +62,10 @@ class MidiInput(context: Context, private val onStatus: (String) -> Unit) {
                 if (settings.channel == 0 || settings.channel == ch) {
                     if (kind == 0x90 && d2 > 0) d2 = curve(d2)
                     if (settings.routeByChannel) {
-                        if (ch in 1..SlotManager.COUNT) NativeEngine.sendMidi(SlotManager.FIRST_INST + ch - 1, status, d1, d2)
+                        if (ch in 1..SlotManager.COUNT) {
+                            if (status and 0xF0 == 0x90 && d2 > 0) PlaybackService.onNote()
+                            NativeEngine.sendMidi(SlotManager.FIRST_INST + ch - 1, status, d1, d2)
+                        }
                     } else NativeEngine.sendMidi(status, d1, d2)
                 }
                 if ((status and 0xF0) == 0x90 && d2 > 0) Log.i(TAG, "MIDI in: note on $d1 vel $d2 ch ${(status and 0x0F) + 1}")

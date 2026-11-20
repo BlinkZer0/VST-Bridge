@@ -83,6 +83,7 @@ object NativeEngine {
     fun lastResponse() = lastResponse(playerSlot)
     fun request(req: String, timeoutMs: Int) = request(playerSlot, req, timeoutMs)
     fun sendMidi(status: Int, d1: Int, d2: Int): Boolean {
+        if (status and 0xF0 == 0x90 && d2 > 0) PlaybackService.onNote()
         var ok = false
         for (s in playerSlots) ok = sendMidi(s, status, d1, d2) || ok
         return ok

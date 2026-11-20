@@ -31,6 +31,14 @@ class PlaybackService : Service() {
         // returns; the plugins stay loaded. Requested while any slot runs, abandoned after the last unload.
         private var focusRequest: android.media.AudioFocusRequest? = null
         private var ducked = false
+        private var appContext: Context? = null
+        /** A note is about to play: after a permanent focus loss Android never hands focus back, so
+         *  ask for it again (the other player ducks or pauses, as it would for any music app). */
+        fun onNote() {
+            if (focusRequest != null) return
+            val ctx = appContext ?: return
+            if (Bridge.activeSlots().isNotEmpty()) ensureFocus(ctx)
+        }
         private fun masterGain(ctx: Context): Float {
             val p = ctx.getSharedPreferences("mixer", Context.MODE_PRIVATE)
             val db = p.getFloat("db-1", 0f)
@@ -45,17 +53,23 @@ class PlaybackService : Service() {
             val req = android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(attrs).setWillPauseWhenDucked(false)
                 .setOnAudioFocusChangeListener { change ->
+                    Log.i(TAG, "audio focus change $change (gain=1, loss=-1, transient=-2, duck=-3)")
                     when (change) {
                         android.media.AudioManager.AUDIOFOCUS_GAIN -> { ducked = false; NativeEngine.setGain(masterGain(ctx)) }
                         android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> { ducked = true; NativeEngine.setGain(masterGain(ctx) * 0.25f) }
                         else -> {   // LOSS, LOSS_TRANSIENT: silence and release held notes
                             ducked = true
+                            // Permanent loss: we are off the focus stack; the next note asks again.
+                            if (change == android.media.AudioManager.AUDIOFOCUS_LOSS) focusRequest = null
                             NativeEngine.setGain(0f)
                             for (s in Bridge.activeSlots()) { NativeEngine.sendMidi(s, 0xB0, 64, 0); NativeEngine.sendMidi(s, 0xB0, 123, 0) }
                         }
                     }
                 }.build()
-            if (am.requestAudioFocus(req) == android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED) focusRequest = req
+            if (am.requestAudioFocus(req) == android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+                focusRequest = req
+                if (ducked) { ducked = false; NativeEngine.setGain(masterGain(ctx)) }   // no GAIN callback for a fresh grant
+            }
         }
         private fun abandonFocus(ctx: Context) {
             val req = focusRequest ?: return
@@ -66,6 +80,7 @@ class PlaybackService : Service() {
 
         fun update(context: Context) {
             val ctx = context.applicationContext
+            appContext = ctx
             val names = Bridge.activeSlots().map { s ->
                 SlotManager.label(s).removePrefix("VST gHost ") + ": " +
                     (Bridge.get(ctx, s).plugin?.let { NativePlugins.displayName(it).removeSuffix(" · native") } ?: "?")
