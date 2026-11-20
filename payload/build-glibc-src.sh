@@ -125,7 +125,25 @@ case "${1:-}" in
         sed -i -e '/libsanitizer\/{a,l,ub}san/d' -e 's|make -C $TERMUX_HOST_PLATFORM/libsanitizer/tsan install-toolexeclibLTLIBRARIES|:|' gpkg/gcc-libs/build.sh
         grep -q "libsanitizer/{a,l,ub}san" gpkg/gcc-libs/build.sh && { echo "could not patch the gcc-libs install step"; exit 1; }
         # CONTINUE=1: resume a build whose compile finished (termux build-package.sh -c skips
-        # extraction and configure, runs make, make install and packaging).
+        # extraction, configure and the recipe's pre-configure step, then runs make, make install
+        # and packaging). The recipe sets its compiler flags in pre-configure; GCC's sub-configures
+        # refuse to continue when CFLAGS differ from the recorded ones, so the make step re-applies
+        # them when they are missing (the build system appends trailing blanks after pre-configure;
+        # the flags go in front of those so the strings match exactly).
+        if ! grep -q "vstghost-continue" gpkg/gcc-libs/build.sh; then
+            cat > /tmp/vg-gcclibs-make.sh <<'BLOCK'
+	# vstghost-continue: pre-configure's flag changes, for a resumed build (see payload/build-glibc-src.sh)
+	if [[ "$CFLAGS" != *"-I${TERMUX_PREFIX}/include"* ]]; then
+		CFLAGS=${CFLAGS/-Werror=format-security/}
+		CXXFLAGS=${CXXFLAGS/-Werror=format-security/}
+		local _t="${CFLAGS##*[^ ]}"; CFLAGS="${CFLAGS%"$_t"} -I${TERMUX_PREFIX}/include -L${TERMUX_PREFIX}/lib$_t"
+		_t="${CXXFLAGS##*[^ ]}"; CXXFLAGS="${CXXFLAGS%"$_t"} -I${TERMUX_PREFIX}/include -L${TERMUX_PREFIX}/lib$_t"
+		[[ "$CXX" == *"-std=gnu++17"* ]] || export CXX="${CXX} -std=gnu++17"
+	fi
+BLOCK
+            sed -i '/^termux_step_make() {/r /tmp/vg-gcclibs-make.sh' gpkg/gcc-libs/build.sh
+            grep -q "vstghost-continue" gpkg/gcc-libs/build.sh || { echo "could not patch the gcc-libs make step"; exit 1; }
+        fi
         cont=""
         [ "${CONTINUE:-0}" = 1 ] && cont="-c"
         log "building: $PACKAGES"
