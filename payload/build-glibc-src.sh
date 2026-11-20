@@ -103,9 +103,12 @@ case "${1:-}" in
         export NDK="$NDK_DIR" ANDROID_HOME="$HOME/lib/android-sdk"
         # CGCT's cross g++ (16.x) compiles C++20 by default; GCC 14's libcody is not C++20-clean
         # (u8"" literals become char8_t). Build gcc-libs as gnu++17, as its own era's compilers did.
-        if ! grep -q "std=gnu++17" gpkg/gcc-libs/build.sh; then
-            sed -i 's|CXXFLAGS+=" -I${TERMUX_PREFIX}/include|CXXFLAGS+=" -std=gnu++17 -I${TERMUX_PREFIX}/include|' gpkg/gcc-libs/build.sh
-            grep -q "std=gnu++17" gpkg/gcc-libs/build.sh || { echo "could not patch gpkg/gcc-libs/build.sh"; exit 1; }
+        # It has to go into CXX itself: GCC's top-level make passes CXX down to libcody, overriding
+        # the -std=c++11 its configure picks, and a -std in CXXFLAGS breaks that configure check.
+        sed -i 's|CXXFLAGS+=" -std=gnu++17 -I|CXXFLAGS+=" -I|' gpkg/gcc-libs/build.sh   # (earlier form of this patch)
+        if ! grep -q 'export CXX="${CXX} -std=gnu++17"' gpkg/gcc-libs/build.sh; then
+            sed -i '/CXXFLAGS+=" -I${TERMUX_PREFIX}\/include -L${TERMUX_PREFIX}\/lib"/a export CXX="${CXX} -std=gnu++17"' gpkg/gcc-libs/build.sh
+            grep -q 'export CXX="${CXX} -std=gnu++17"' gpkg/gcc-libs/build.sh || { echo "could not patch gpkg/gcc-libs/build.sh"; exit 1; }
         fi
         log "building: $PACKAGES"
         # -I: install dependencies from the repo instead of building the world; --library glibc:
