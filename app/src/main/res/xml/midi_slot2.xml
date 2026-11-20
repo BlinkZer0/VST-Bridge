@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Virtual MIDI device for bridge slot "VST gHost Inst 2" (input only: other apps play it). -->
-<devices>
-    <device name="VST gHost Inst 2" manufacturer="VST gHost" product="Bridge slot Inst 2">
-        <input-port name="input" />
-    </device>
-</devices>
