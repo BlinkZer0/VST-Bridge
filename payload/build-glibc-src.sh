@@ -13,6 +13,8 @@
 #                                        a setup that ran before these steps existed)
 #   payload/build-glibc-src.sh tools     once, as the normal user: Android NDK + CGCT toolchain
 #   payload/build-glibc-src.sh build     as the normal user: builds the packages (long: glibc ~20 min,
+#                                        PACKAGES="glibc gcc-libs" picks recipes, CONTINUE=1 resumes after a
+#                                        failed install step without recompiling;
 #                                        gcc-libs builds GCC, 1–2 h on 32 cores)
 #
 # Output: $OUT/glibc-<ver>-<rel>-aarch64.pkg.tar.xz and gcc-libs-glibc-…pkg.tar.xz, plus sha256 files.
@@ -119,10 +121,17 @@ case "${1:-}" in
             sed -i 's/--disable-libssp /--disable-libssp --disable-libsanitizer /' gpkg/gcc-libs/build.sh
             grep -q -- "--disable-libsanitizer" gpkg/gcc-libs/build.sh || { echo "could not patch gpkg/gcc-libs/build.sh (libsanitizer)"; exit 1; }
         fi
+        # ... and its install step must not ask for the sanitizer libraries either.
+        sed -i -e '/libsanitizer\/{a,l,ub}san/d' -e 's|make -C $TERMUX_HOST_PLATFORM/libsanitizer/tsan install-toolexeclibLTLIBRARIES|:|' gpkg/gcc-libs/build.sh
+        grep -q "libsanitizer/{a,l,ub}san" gpkg/gcc-libs/build.sh && { echo "could not patch the gcc-libs install step"; exit 1; }
+        # CONTINUE=1: resume a build whose compile finished (termux build-package.sh -c skips
+        # extraction and configure, runs make, make install and packaging).
+        local cont=""
+        [ "${CONTINUE:-0}" = 1 ] && cont="-c"
         log "building: $PACKAGES"
         # -I: install dependencies from the repo instead of building the world; --library glibc:
         # the glibc-based package set; --format pacman: the .pkg.tar.xz step_glibc understands.
-        ./build-package.sh -I -a aarch64 --format pacman --library glibc $PACKAGES
+        ./build-package.sh $cont -I -a aarch64 --format pacman --library glibc $PACKAGES
         mkdir -p "$OUT"
         cp -v output/*.pkg.tar.xz "$OUT"/
         (cd "$OUT" && sha256sum ./*.pkg.tar.xz | tee SHA256SUMS)
