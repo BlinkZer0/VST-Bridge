@@ -221,7 +221,8 @@ class PluginImport(private val ctx: Context) {
         val winExe = "Z:" + exe.path.replace('/', '\\')
         val innoLog = File(ctx.filesDir, "installer-inno.log").apply { delete() }
         val vst3Dir = File(payload.root, "prefix/drive_c/Program Files/Common Files/VST3").apply { mkdirs() }
-        val before = vst3Dir.listFiles()?.map { it.name }?.toSet().orEmpty()
+        val before = vst3Entries(vst3Dir).keys
+        val t0 = System.currentTimeMillis() - 2_000
         val args = when (kind) {
             "msi" -> listOf("msiexec", "/i", winExe, "/qn", "/norestart")
             "inno" -> listOf(winExe, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/NOCANCEL",
@@ -255,7 +256,12 @@ class PluginImport(private val ctx: Context) {
         // Inno Setup's own log says which step failed; keep its tail with the installer output.
         val innoTail = if (innoLog.isFile) innoLog.readLines().takeLast(12) else emptyList()
         if (innoTail.isNotEmpty()) File(ctx.filesDir, "installer.log").appendText("\n--- Inno Setup log (tail) ---\n" + innoTail.joinToString("\n") + "\n")
-        val fresh = vst3Dir.listFiles().orEmpty().filter { it.name !in before && it.name.lowercase().endsWith(".vst3") }
+        // New bundles, and bundles the installer rewrote (a re-install): their folder, or the folder
+        // holding a single-file .vst3, was modified while the installer ran. Inno Setup keeps the
+        // files' original timestamps, so file mtimes alone would not show it.
+        val fresh = vst3Entries(vst3Dir).filter { (k, f) ->
+            k !in before || f.lastModified() >= t0 || (f.parentFile?.lastModified() ?: 0L) >= t0
+        }.values.toList()
         if (fresh.isEmpty()) {
             val log = (innoTail.takeLast(4).takeIf { it.isNotEmpty() } ?: synchronized(tail) { tail.toList() }).joinToString(" | ").take(400)
             return Result(emptyList(), "${f.name}: the installer finished (exit ${p.exitValue()}) but left no .vst3 in Common Files\\VST3" +
@@ -270,9 +276,26 @@ class PluginImport(private val ctx: Context) {
                 src.deleteRecursively()
             }
             names += dst.name.removeSuffix(".vst3")
+            // Vendor folders ("Surge Synth Team") the installer created, if nothing else is left in them.
+            var d = src.parentFile
+            while (d != null && d != vst3Dir && d.listFiles().isNullOrEmpty()) { d.delete(); d = d.parentFile }
         }
         return Result(names, "Installed ${names.joinToString()} from ${f.name}")
     }
+
+    /**
+     * The .vst3 bundles (or single files) under Common Files\VST3, by relative path. Installers
+     * usually put them in a vendor folder one level down; bundles themselves are not entered.
+     */
+    private fun vst3Entries(dir: File, depth: Int = 0): Map<String, File> {
+        val out = linkedMapOf<String, File>()
+        for (f in dir.listFiles().orEmpty()) {
+            if (f.name.lowercase().endsWith(".vst3")) out[f.relativeTo(vst3Root(dir, depth)).path] = f
+            else if (f.isDirectory && depth < 2) out += vst3Entries(f, depth + 1)
+        }
+        return out
+    }
+    private fun vst3Root(dir: File, depth: Int): File { var d = dir; repeat(depth) { d = d.parentFile ?: d }; return d }
 
     private fun displayName(uri: Uri): String? = queryName(uri) ?: uri.lastPathSegment?.substringAfterLast('/')
 
