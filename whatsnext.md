@@ -140,17 +140,20 @@ open), Surge XT engine + OpenGL editor (2.2 s, 0.1 core), Pedal Faster Windows b
    troubleshooting; no further sideload testing.
 
 15. **Release batch (2026-11-19, order: 13, 14, 2, 3, 4+TOS, 5, 6, 7, 8, 9, 11, 12, then 1).**
-   - 13 Installer test — DONE 2026-11-19, result: **Inno Setup / NSIS installers cannot run in v1.**
-     Their launcher is a 32-bit x86 program even when the plugin inside is 64-bit (surge-xt-setup.exe
-     and Native-Access_2.exe both: PE machine 0x14c), and the payload has no WoW64/32-bit emulation,
-     so Wine exits 1 before writing anything. The app now checks the PE header: such files are listed
-     as not installable ("32-bit installer program…") and refused with a message that says to run
-     the installer on a PC and import the .vst3 as a zip. The whole installer output goes to
-     files/installer.log (in the problem report). MSI installers (msiexec, 64-bit) still run.
-     Options for a later version: (a) WoW64 — Wine built with `--enable-archs=i386,x86_64` plus
-     Box64 built with BOX32 (how Winlator runs 32-bit apps; long payload rebuild, ~+40 MB);
-     (b) extract instead of run — innoextract (zlib licence) built natively for Inno Setup, 7-Zip
-     for NSIS/MSI; no Wine involved, covers most plugin installers.
+   - 13 Installer test — DONE 2026-11-20 with **WoW64 (payload series 3)**. Inno Setup / NSIS
+     launchers are 32-bit x86 programs (surge-xt-setup.exe, Native-Access_2.exe: PE machine 0x14c);
+     the series-2 runtime (x86_64 only) exited 1 at once. Now: Wine built `--enable-archs=i386,x86_64`
+     (i686 MinGW in setup-ubuntu.sh; +49 MB payload: 133 MB packed), Box64 unchanged except linked
+     at 0x4000000000 and reserving 0x110000-0x68000000 of low memory for Wine (its old 0x34800000
+     image capped 32-bit programs at ~750 MB; Surge's installer commits 1 GB for its LZMA
+     dictionary), and ntdll patched to treat unix file names as UTF-8 (patch 0005; Inno failed
+     renaming "µcomputer.fxp"). Install plugin now collects bundles from vendor subfolders
+     ("Surge Synth Team"), counts re-installs as new, passes /LOG to Inno and shows its tail on
+     failure; files/installer.log + installer-inno.log go into problem reports; files/installer.env
+     (KEY=VALUE) overrides the installer's environment for experiments over adb.
+     Verified on the phone: surge-xt-setup.exe → "Installed Surge XT, Surge XT Effects", 497 MB of
+     factory data in ProgramData, editor's patch browser steps through the factory patches.
+     The app refuses 32-bit installers only when the runtime has no i386 side.
    - 14 Odin2 native: builds and its modal menus work (nested Looper, `JuceModalLoop.kt` +
      `vgn_adapter.cpp`), but Odin2 is GPL-3 and the app is proprietary → not bundled. `.jucer`
      projects: `VgJucer.cmake` + `JUCER` option of `vg_add_juce_project` (test entry `dexedjucer`,

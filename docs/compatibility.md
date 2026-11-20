@@ -58,7 +58,7 @@ within 90 s after the editor was closed (Dexed, ProM, glBars, DragonflyEarlyRefl
 | Plugin | Audio | Editor |
 |---|---|---|
 | Dexed (JUCE 8, Direct2D emulated) | yes | complete, taps work; 12–14 s open, ≈2 cores while open |
-| Surge XT (OpenGL) | yes, 2081 parameters | full editor, 2.2 s open; no factory patches without the installer's data folder |
+| Surge XT (OpenGL) | yes, 2081 parameters | full editor, 2.2 s open; factory patches/wavetables when installed from surge-xt-setup.exe (Install plugin…, WoW64) |
 | Surge XT Effects | yes | default skin (same data-folder caveat) |
 | Pedal Faster, Windows build (JUCE 9, GDI) | yes | complete, 1.7 s open |
 | No Strings, Windows build (JUCE 8.0.17) | yes, 55 parameters, 0.6 s load | blank: the editor is a WebView2 (Edge/Chromium) web UI, which the Wine prefix cannot provide — use the native build |
@@ -71,7 +71,7 @@ within 90 s after the editor was closed (Dexed, ProM, glBars, DragonflyEarlyRefl
 
 Installer-only downloads: OB-Xd, Odin2 (official), TAL plugins, Helm, Neural Amp Modeler,
 Chow* plugins, u-he (Zebralette, Tyrell, Podolski), sfizz, Vital. They need the installer-based
-import that is on the list. Inno Setup and NSIS installers have 32-bit launchers, so they need the
-WoW64 runtime (payload series 3, Wine built with i386 + x86_64 PE); with the series-2 runtime the app
-refuses them with a message (MSI installers run either way). Cardinal's
+import. Inno Setup and NSIS installers have 32-bit launchers, so they need the WoW64 runtime (payload
+series 3, Wine built with i386 + x86_64 PE; Surge XT's installer verified); with the series-2 runtime
+the app refuses them with a message (MSI installers run either way). Cardinal's
 1.1 GB zip is excluded for size only.
